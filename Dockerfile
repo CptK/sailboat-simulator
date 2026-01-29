@@ -22,8 +22,8 @@ WORKDIR /home/sailor
 USER sailor
 ENV HOME=/home/sailor
 
-COPY --chown=sailor:sailor . ros_workshop
-WORKDIR /home/sailor/ros_workshop
+COPY --chown=sailor:sailor . sailboat_simulator
+WORKDIR /home/sailor/sailboat_simulator
 
 # Remove local venv folders (not needed in container, causes colcon issues)
 RUN rm -rf venv .venv */venv */.venv
@@ -37,7 +37,7 @@ RUN rosdep update -q
 USER root
 RUN rosdep install --from-paths src --ignore-src -r -y
 USER sailor
-WORKDIR /home/sailor/ros_workshop
+WORKDIR /home/sailor/sailboat_simulator
 
 # Build ROS workspace (must use bash for ROS setup script)
 SHELL ["/bin/bash", "-c"]
@@ -45,7 +45,7 @@ RUN source /opt/ros/jazzy/setup.bash && colcon build
 
 # Source ROS on every bash session
 RUN echo "source /opt/ros/jazzy/setup.bash" >> ~/.bashrc && \
-    echo "source /home/sailor/ros_workshop/install/setup.bash" >> ~/.bashrc
+    echo "source /home/sailor/sailboat_simulator/install/setup.bash" >> ~/.bashrc
 
 # Headless rendering
 ENV MUJOCO_GL=osmesa
