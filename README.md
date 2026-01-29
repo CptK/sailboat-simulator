@@ -2,6 +2,27 @@
 
 A complete ROS2-based autonomous sailboat navigation system with physics-based simulation, PID control, and intelligent route planning.
 
+## Table of Contents
+
+- [Overview](#overview)
+- [System Architecture](#system-architecture)
+- [Packages](#packages)
+- [Quick Start](#quick-start)
+  - [Prerequisites](#prerequisites)
+  - [Installation](#installation)
+  - [Running the Full System](#running-the-full-system)
+  - [Interactive Simulation](#interactive-simulation)
+  - [Launch Individual Nodes](#launch-individual-nodes)
+- [Docker Deployment](#docker-deployment)
+- [Key Features](#key-features)
+- [Unit Conventions](#unit-conventions)
+- [Development](#development)
+  - [Running Tests](#running-tests)
+  - [Code Structure](#code-structure)
+  - [Adding New Features](#adding-new-features)
+- [Performance Tips](#performance-tips)
+- [Troubleshooting](#troubleshooting)
+
 ## Overview
 
 This project implements an end-to-end autonomous sailing system that combines:
@@ -162,7 +183,31 @@ ros2 topic pub /planning/target_route boat_msgs/msg/Route \
 
 ## Docker Deployment
 
-Build and run the system in a containerized environment:
+Pre-built multi-platform Docker images are available for both `amd64` and `arm64` architectures through GitHub Container Registry.
+
+### Using Pre-built Images
+
+Pull and run the latest image:
+
+```bash
+# Pull the latest image
+docker pull ghcr.io/cptk/sailboat-simulator:main
+
+# Run container
+docker run -it --rm ghcr.io/cptk/sailboat-simulator:main
+
+# Inside container, run the simulation
+python scripts/run_simulation.py
+```
+
+Available tags:
+- `main` - Latest build from main branch
+- `v*` - Specific version releases (e.g., `v1.0.0`)
+- `sha-<commit>` - Specific commit builds
+
+### Building Locally
+
+Alternatively, build the image from source:
 
 ```bash
 # Build image
@@ -175,11 +220,12 @@ docker run -it --rm ros_workshop
 python scripts/run_simulation.py
 ```
 
-The Dockerfile sets up:
+The Docker image includes:
 - ROS2 Jazzy base
 - All Python dependencies
 - Pre-built workspace
 - Headless rendering (MUJOCO_GL=osmesa)
+- Support for both amd64 and arm64 architectures
 
 ## Key Features
 
