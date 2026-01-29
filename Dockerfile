@@ -29,6 +29,8 @@ WORKDIR /home/sailor/ros_workshop
 RUN rm -rf venv .venv */venv */.venv
 
 # Do not use a virtual environment because for some reason ROS always uses the system python packages
+# Install PyTorch CPU-only first to avoid pulling CUDA dependencies (saves several GBs)
+RUN pip3 install torch --index-url https://download.pytorch.org/whl/cpu --break-system-packages
 RUN pip3 install -r requirements.txt --break-system-packages
 
 RUN rosdep update -q

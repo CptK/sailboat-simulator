@@ -222,10 +222,27 @@ python scripts/run_simulation.py
 
 The Docker image includes:
 - ROS2 Jazzy base
-- All Python dependencies
+- All Python dependencies (with CPU-only PyTorch)
 - Pre-built workspace
 - Headless rendering (MUJOCO_GL=osmesa)
 - Support for both amd64 and arm64 architectures
+
+### Enabling GPU Support
+
+The Docker image ships with CPU-only PyTorch to keep the image size small. If you need GPU acceleration for training with stable_baselines3:
+
+```bash
+# Inside the container, install PyTorch with CUDA support
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+
+# Or for a different CUDA version (e.g., CUDA 11.8)
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+```
+
+Note: You'll also need to run the container with GPU access:
+```bash
+docker run -it --rm --gpus all ghcr.io/cptk/sailboat-simulator:main
+```
 
 ## Key Features
 
