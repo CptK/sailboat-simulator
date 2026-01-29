@@ -1,0 +1,8 @@
+gymnasium
+mujoco
+numpy
+pytest
+stable_baselines3
+imageio[ffmpeg]
+pydantic
+shapely

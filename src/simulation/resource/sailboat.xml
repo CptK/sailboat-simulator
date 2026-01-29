@@ -1,0 +1,125 @@
+<mujoco model="sailboat">
+  <option gravity="0 0 -9.81" timestep="0.005" integrator="implicit"/>
+
+  <visual>
+    <headlight ambient="0.6 0.6 0.6" diffuse="0.8 0.8 0.8" specular="0.3 0.3 0.3"/>
+    <rgba haze="0.85 0.9 0.95 1"/>
+    <quality shadowsize="4096"/>
+    <global offwidth="1920" offheight="1080"/>
+  </visual>
+
+  <asset>
+    <texture name="water_tex" type="2d" builtin="checker" rgb1="0.15 0.4 0.6" rgb2="0.2 0.5 0.7" width="512" height="512"/>
+    <texture name="sky_tex" type="skybox" builtin="gradient" rgb1="0.5 0.7 0.95" rgb2="1.0 1.0 1.0" width="512" height="512"/>
+    <material name="water_mat" texture="water_tex" texrepeat="50 50" reflectance="0.5" specular="0.8" shininess="0.9"/>
+    <material name="hull_mat" rgba="0.6 0.3 0.1 1"/>
+    <material name="sail_mat" rgba="1 1 0.95 0.95"/>
+    <material name="mast_mat" rgba="0.4 0.25 0.1 1"/>
+  </asset>
+
+  <worldbody>
+    <!-- Sunlight -->
+    <light name="sun" pos="50 -50 100" dir="-0.4 0.4 -0.8" diffuse="1 0.95 0.9" specular="0.5 0.5 0.5" castshadow="true"/>
+
+    <!-- Water surface (visual only, slightly below z=0) -->
+    <geom name="water" type="plane" size="200 200 1" material="water_mat" pos="0 0 -0.1" contype="0" conaffinity="0"/>
+
+    <!-- Sailboat using slide joints for constrained motion -->
+    <body name="boat_base" pos="0 0 0">
+      <!-- Minimal inertia for base body -->
+      <inertial pos="0 0 0" mass="1" diaginertia="0.1 0.1 0.1"/>
+      <!-- X-Y translation on water surface -->
+      <joint name="boat_x" type="slide" axis="1 0 0" damping="5"/>
+      <joint name="boat_y" type="slide" axis="0 1 0" damping="5"/>
+      <!-- Yaw rotation -->
+      <joint name="boat_yaw" type="hinge" axis="0 0 1" damping="2"/>
+
+      <!-- Small vertical float for wave effect -->
+      <body name="boat_hull" pos="0 0 0.35">
+        <joint name="boat_heave" type="slide" axis="0 0 1" damping="100" stiffness="5000" springref="0"/>
+        <joint name="boat_roll" type="hinge" axis="1 0 0" damping="500" stiffness="50000" springref="0"/>
+        <joint name="boat_pitch" type="hinge" axis="0 1 0" damping="500" stiffness="50000" springref="0"/>
+
+        <!-- Hull -->
+        <geom name="hull_main" type="capsule" size="0.3 1.2" pos="0 0 0" euler="0 90 0"
+              mass="80" material="hull_mat" contype="0" conaffinity="0"/>
+        <geom name="hull_bow" type="ellipsoid" size="0.25 0.2 0.15" pos="1.2 0 0" mass="10" material="hull_mat" contype="0" conaffinity="0"/>
+        <geom name="hull_stern" type="ellipsoid" size="0.28 0.22 0.15" pos="-1.0 0 0" mass="25" material="hull_mat" contype="0" conaffinity="0"/>
+
+        <!-- Keel (heavy for stability, runs along boat length, positioned aft to balance) -->
+        <geom name="keel" type="box" size="0.6 0.03 0.4" pos="-0.4 0 -0.5" mass="150" rgba="0.2 0.2 0.25 1" contype="0" conaffinity="0"/>
+
+        <!-- Deck -->
+        <geom name="deck" type="box" size="0.9 0.25 0.03" pos="0 0 0.28" mass="5" material="hull_mat" contype="0" conaffinity="0"/>
+
+        <!-- Mast -->
+        <body name="mast_body" pos="-0.1 0 0.3">
+          <geom name="mast" type="cylinder" size="0.04 1.8" pos="0 0 1.8" mass="4" material="mast_mat" contype="0" conaffinity="0"/>
+
+          <!-- Boom with sail (points aft at angle 0, swings left/right based on wind) -->
+          <body name="boom_body" pos="0 0 1.0">
+            <joint name="boom_joint" type="hinge" axis="0 0 1" range="-90 90" damping="10"/>
+            <!-- Boom points backward (negative x) at angle 0 -->
+            <geom name="boom" type="cylinder" size="0.025 1.0" pos="-1.0 0 0" euler="0 90 0" mass="3" material="mast_mat" contype="0" conaffinity="0"/>
+
+            <!-- Sail (triangular shape, extends aft from mast) -->
+            <geom name="sail_base" type="box" size="0.9 0.008 0.5" pos="-0.9 0 0.6" mass="0.5" material="sail_mat" contype="0" conaffinity="0"/>
+            <geom name="sail_mid" type="box" size="0.65 0.008 0.45" pos="-0.65 0 1.4" mass="0.3" material="sail_mat" contype="0" conaffinity="0"/>
+            <geom name="sail_top" type="box" size="0.35 0.008 0.4" pos="-0.35 0 2.1" mass="0.2" material="sail_mat" contype="0" conaffinity="0"/>
+          </body>
+        </body>
+
+        <!-- Rudder (range -45 to 45 degrees) -->
+        <body name="rudder_body" pos="-1.1 0 -0.15">
+          <joint name="rudder_joint" type="hinge" axis="0 0 1" range="-45 45" damping="1"/>
+          <geom name="rudder" type="box" size="0.2 0.015 0.25" pos="0 0 -0.2" mass="3" rgba="0.45 0.25 0.1 1" contype="0" conaffinity="0"/>
+        </body>
+
+        <!-- Center of mass marker (invisible) -->
+        <site name="com" pos="0 0 0" size="0.05" rgba="1 0 0 0"/>
+
+        <!-- Chase camera: birds-eye view from behind and above -->
+        <camera name="chase_cam" pos="-20 0 14" xyaxes="0 -1 0 1 0 1.9" fovy="60"/>
+      </body>
+    </body>
+
+    <!-- Wind direction indicator - large arrow showing where wind blows TO -->
+    <body name="wind_arrow" pos="8 0 4" mocap="true">
+      <!-- Arrow shaft - bright cyan -->
+      <geom name="arrow_shaft" type="cylinder" size="0.12 1.2" euler="0 90 0"
+            rgba="0.0 0.9 1.0 0.9" contype="0" conaffinity="0"/>
+      <!-- Arrowhead - orange/yellow for contrast -->
+      <geom name="arrow_head1" type="box" size="0.4 0.08 0.4" pos="1.4 0 0" euler="0 0 45"
+            rgba="1.0 0.6 0.0 0.95" contype="0" conaffinity="0"/>
+      <geom name="arrow_head2" type="box" size="0.4 0.08 0.4" pos="1.4 0 0" euler="0 0 -45"
+            rgba="1.0 0.6 0.0 0.95" contype="0" conaffinity="0"/>
+      <!-- Arrow tail feathers -->
+      <geom name="arrow_tail1" type="box" size="0.25 0.04 0.15" pos="-1.3 0 0.15"
+            rgba="0.0 0.7 0.9 0.8" contype="0" conaffinity="0"/>
+      <geom name="arrow_tail2" type="box" size="0.25 0.04 0.15" pos="-1.3 0 -0.15"
+            rgba="0.0 0.7 0.9 0.8" contype="0" conaffinity="0"/>
+      <!-- Wind streaks behind arrow -->
+      <geom name="streak1" type="cylinder" size="0.03 0.6" euler="0 90 0" pos="-2.2 0.3 0.2"
+            rgba="0.8 0.95 1.0 0.5" contype="0" conaffinity="0"/>
+      <geom name="streak2" type="cylinder" size="0.03 0.5" euler="0 90 0" pos="-2.0 -0.25 -0.15"
+            rgba="0.8 0.95 1.0 0.5" contype="0" conaffinity="0"/>
+      <geom name="streak3" type="cylinder" size="0.03 0.4" euler="0 90 0" pos="-1.8 0.15 -0.3"
+            rgba="0.8 0.95 1.0 0.5" contype="0" conaffinity="0"/>
+    </body>
+
+    <!-- Masthead wind vane (windex) - small indicator on top of mast -->
+    <body name="wind_vane" pos="0 0 5" mocap="true">
+      <geom name="vane_arrow" type="box" size="0.3 0.02 0.05" pos="0.15 0 0"
+            rgba="1.0 0.3 0.0 1.0" contype="0" conaffinity="0"/>
+      <geom name="vane_tail" type="box" size="0.15 0.02 0.08" pos="-0.2 0 0"
+            rgba="0.2 0.8 0.2 1.0" contype="0" conaffinity="0"/>
+    </body>
+  </worldbody>
+
+  <actuator>
+    <!-- Rudder: ctrlrange in radians (-45° = -0.785, +45° = +0.785) -->
+    <position name="rudder_ctrl" joint="rudder_joint" kp="30" ctrlrange="-0.785 0.785"/>
+    <!-- Sail angle: 0=tight (boom centered), 90=fully out -->
+    <general name="sheet_ctrl" joint="boom_joint" ctrlrange="0 90" gainprm="0" biasprm="0 0 0"/>
+  </actuator>
+</mujoco>

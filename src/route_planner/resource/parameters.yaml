@@ -1,0 +1,35 @@
+route_planner_node:
+  ros__parameters:
+    # The interval in which the step function is called (in seconds)
+    step_interval: 0.2
+
+    # MISSION
+    # The radius around a waypoint in which the robot is considered to have reached the waypoint (in meters)
+    dist_threshold: 5
+
+    # The maximum distance between the robot and the path to consider the robot on the path (in meters)
+    off_course_threshold: 10
+
+    # The minimum angle between the boat's path and the wind direction that is considered sailable (in degrees)
+    min_tack_angle: 50
+
+    # The maximum wind speed in which jibing is considered safe (in km/h)
+    safe_jibe_threshold: 15
+
+    # The step size in degrees that the robot will use to adjust its heading during a maneuver.
+    maneuver_heading_step_size: 10
+
+    # The multiplier that is applied to the maneuver heading step size to determine the step size of the 
+    # command that is sent to the robot.
+    command_step_size_multiplier: 1.5
+
+    # The tolerance in degrees that is allowed for the robot's heading to be off from the target heading.
+    heading_tolerance: 2
+
+    # The maximum number of steps that may be used to cross the wind when tacking before the maneuver is 
+    # considered stuck.
+    max_steps_to_cross_wind_when_tacking: 500
+
+    # If the planner is missing values (such as position, heading or a desired route), it sends out warnings.
+    # This parameter defines the minimum time between two warnings in seconds to avoid flooding the log.
+    time_between_missing_values_logs: 10
