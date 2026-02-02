@@ -12,7 +12,7 @@ class SailController:
         Output: sail_angle in DEGREES [0, 90]
     """
 
-    def compute_sail_angle(self, wind_angle: float, boat_heading: float, boat_speed: float = None) -> float:
+    def compute_sail_angle(self, wind_angle: float, boat_heading: float, boat_speed: float | None = None) -> float:
         """
         Compute sail angle command based on apparent wind angle.
 
