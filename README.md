@@ -144,6 +144,8 @@ This script will:
 
 ### Interactive Simulation
 
+#### Manual Control
+
 To manually control the sailboat with UI sliders:
 
 ```bash
@@ -151,6 +153,25 @@ python scripts/play.py
 ```
 
 Use the sliders in the MuJoCo viewer to control rudder and sail angles directly.
+
+#### Controller Testing
+
+To test and compare LQR and PID controllers with automatic sail control:
+
+```bash
+# Test LQR controller (default)
+python scripts/test_controller.py --controller lqr
+
+# Test PID controller
+python scripts/test_controller.py --controller pid
+```
+
+The script automatically cycles through multiple target headings to evaluate controller performance. Configure test parameters by editing constants at the top of `scripts/test_controller.py`:
+- `DESIRED_HEADINGS`: List of target headings to test
+- `SECONDS_PER_HEADING`: Duration to hold each heading
+- `WIND_DIRECTION_DEG`, `WIND_SPEED_MS`: Wind conditions
+- `LQR_Q`, `LQR_R`: LQR controller tuning
+- `PID_KP`, `PID_KI`, `PID_KD`: PID controller tuning
 
 ### Launch Individual Nodes
 
@@ -328,7 +349,8 @@ ros_workshop/
 │       └── test/
 ├── scripts/
 │   ├── run_simulation.py    # Full system launcher
-│   └── play.py              # Interactive manual control
+│   ├── play.py              # Interactive manual control
+│   └── test_controller.py   # Controller testing/comparison
 ├── launch/                  # Launch files
 ├── requirements.txt         # Python dependencies
 ├── Dockerfile               # Container configuration

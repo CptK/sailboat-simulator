@@ -412,3 +412,50 @@ class SailboatSimulation:
         self.data.qpos[self.qadr_y] = north
         self.data.qvel[self.vadr_x] = 0.0
         self.data.qvel[self.vadr_y] = 0.0
+
+    def get_heading_dynamics(self) -> tuple[np.ndarray, np.ndarray, float]:
+        """
+        Compute linearized heading dynamics matrices around current state.
+
+        Returns a tuple of (A_discrete, B_discrete, dt) where:
+        - A_discrete: 2x2 discrete-time state matrix for [yaw, yaw_rate]
+        - B_discrete: 2x1 discrete-time control matrix for rudder input
+        - dt: Estimated timestep from the dynamics
+
+        These matrices describe the discrete-time system:
+            [yaw, yaw_rate]_{k+1} = A @ [yaw, yaw_rate]_k + B @ rudder_k
+        """
+        nv = self.model.nv  # number of velocity DOFs
+        nu = self.model.nu  # number of controls
+
+        # Initialize full system matrices
+        A_full = np.zeros((2*nv, 2*nv))
+        B_full = np.zeros((2*nv, nu))
+
+        # Compute linearized dynamics around current state
+        mujoco.mjd_transitionFD(
+            self.model,
+            self.data,
+            eps=1e-6,
+            flg_centered=1,
+            A=A_full,
+            B=B_full,
+            C=None,
+            D=None
+        )
+
+        # Extract 2x2 heading dynamics
+        # qpos[2] = boat_yaw, qvel[2] = boat_yaw_rate (at index nv + 2 in full state)
+        yaw_idx = self.qadr_yaw            # Position index for yaw
+        yaw_rate_idx = nv + self.vadr_yaw  # Velocity index in full state vector
+
+        indices = [yaw_idx, yaw_rate_idx]
+
+        A_heading = A_full[np.ix_(indices, indices)]
+        B_heading = B_full[indices, self.act_rudder:self.act_rudder+1]  # Rudder control only
+
+        # Estimate timestep from the discrete dynamics
+        # A[0,1] ≈ dt because: yaw_{k+1} ≈ yaw_k + dt * yaw_rate_k
+        dt_estimated = A_heading[0, 1]
+
+        return A_heading, B_heading, dt_estimated

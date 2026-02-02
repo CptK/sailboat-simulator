@@ -4,15 +4,23 @@ Rudder and sail controller for autonomous sailboat navigation.
 
 ## Overview
 
-This package implements a feedback controller that commands the rudder and sail to follow a desired heading. The controller uses a PID algorithm for rudder control with dynamic damping and stall recovery, plus a lookup-based sail controller that adjusts sail trim based on apparent wind angle.
+This package implements feedback controllers that command the rudder and sail to follow a desired heading. Two rudder controller options are available:
+- **PID**: Traditional PID control with dynamic damping and stall recovery
+- **LQR**: Linear Quadratic Regulator for optimal state feedback control
+
+Both controllers work with a lookup-based sail controller that adjusts sail trim based on apparent wind angle.
 
 ## Features
 
-- **PID rudder control**: Proportional-Integral-Derivative control for heading tracking
-- **Dynamic damping**: Adaptive derivative gain that reduces overshoot
-- **Stall recovery**: Automatic escape from "in irons" condition
-- **Wind-relative sail trim**: Sail angle automatically adjusted for apparent wind
+### Rudder Control
+- **PID control**: Proportional-Integral-Derivative control with dynamic damping
+- **LQR control**: Linear Quadratic Regulator for optimal state feedback
+- **Stall recovery**: Automatic escape from "in irons" condition (PID)
 - **Performance logging**: Saves plots of rudder actions and heading tracking
+
+### Sail Control
+- **Wind-relative sail trim**: Sail angle automatically adjusted for apparent wind
+- **Point-of-sail optimization**: Different trim for close-hauled, reaching, and running
 
 ## Node: controller_node
 
@@ -55,6 +63,42 @@ When boat speed drops below 0.5 m/s and wind angle is < 50° (pointing into wind
 - Kp = 0.8
 - Ki = 0.0
 - Kd = 1.0
+
+### LQRController (lqr.py)
+
+Computes rudder angle command using Linear Quadratic Regulator (LQR) optimal control.
+
+**Features:**
+- State feedback on heading and yaw rate
+- Optimal control minimizing quadratic cost function
+- Automatic feedforward for reference tracking
+- Handles angle wrapping for shortest-path turns
+- Dynamics extracted directly from MuJoCo simulation
+
+**Design:**
+The LQR controller is designed based on the linearized heading dynamics extracted from the sailboat simulation using finite differences. The system matrices A and B model the relationship between rudder input and heading/yaw rate response.
+
+**Cost Function:**
+```
+J = ∫ (x'Qx + u'Ru) dt
+```
+Where:
+- Q: State cost matrix (penalizes heading error and yaw rate)
+- R: Control cost matrix (penalizes rudder effort)
+
+**Default Cost Matrices:**
+- Q = diag([0.5, 0.5]) - Equal weight on heading and yaw rate
+- R = [1.0] - Moderate rudder effort penalty
+
+**Usage:**
+```python
+from controller.lqr import get_lqr_controller
+from simulation.sailboat_simulation import SailboatSimulation
+
+sim = SailboatSimulation()
+controller = get_lqr_controller(sim, Q=custom_Q, R=custom_R)
+rudder_deg = controller.compute_action(info)
+```
 
 ### SailController (sail_controller.py)
 
@@ -107,10 +151,36 @@ self.rudder_controller = PIDController(kp=0.8, ki=0.0, kd=1.0)
 
 ## Testing
 
-The controller can be tested in simulation:
+### ROS2 Testing
+
+The controller can be tested with ROS2 nodes:
 
 ```bash
 ros2 launch simulation simulation.launch.py &
 ros2 launch controller controller.launch.py &
 ros2 topic pub /planning/desired_heading boat_msgs/msg/Heading "{heading: 90.0}" -1
 ```
+
+### Standalone Controller Testing
+
+For standalone controller testing and comparison without ROS2:
+
+```bash
+# Test LQR controller
+python scripts/test_controller.py --controller lqr
+
+# Test PID controller
+python scripts/test_controller.py --controller pid
+```
+
+This script:
+- Cycles through multiple target headings automatically
+- Uses automatic sail control via SailController
+- Provides real-time feedback on tracking performance
+- Allows easy comparison between PID and LQR controllers
+
+Configure test parameters by editing constants in `scripts/test_controller.py`:
+- `DESIRED_HEADINGS`: Sequence of headings to test
+- `SECONDS_PER_HEADING`: Duration for each heading
+- `LQR_Q`, `LQR_R`: LQR cost matrices
+- `PID_KP`, `PID_KI`, `PID_KD`: PID gains
