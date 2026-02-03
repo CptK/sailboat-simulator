@@ -38,7 +38,7 @@ DESIRED_HEADINGS = [180, 120, 270, 100, 200]  # Sequence of desired headings to 
 SECONDS_PER_HEADING = 20  # Duration to hold each heading
 
 # LQR rudder controller parameters
-LQR_Q = np.diag([0.5, 0.5])  # State cost matrix
+LQR_Q = np.diag([5.0, 0.5])  # State cost matrix
 LQR_R = np.array([1.0])      # Action cost matrix
 
 # PID rudder controller parameters

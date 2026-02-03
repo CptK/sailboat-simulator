@@ -4,7 +4,7 @@ controller_node:
     rudder_controller_type: "lqr"
 
     # LQR CONTROLLER PARAMETERS
-    lqr_heading_error_weight: 0.5
+    lqr_heading_error_weight: 5.0
     lqr_yaw_rate_weight: 0.5
     lqr_rudder_action_weight: 1.0
 
