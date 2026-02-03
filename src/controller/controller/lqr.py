@@ -53,16 +53,29 @@ class LQRController:
         Compute rudder angle command.
 
         Args:
-            info: ControllerInfo with angles in RADIANS, yaw_rate in rad/s.
+            info: ControllerInfo with angles in RADIANS (NAUTICAL convention: 0=North).
+                  yaw_rate in rad/s (nautical convention: clockwise positive).
             dt: Time step in seconds (not used in LQR but kept for interface consistency).
 
         Returns:
             rudder_angle_deg: Rudder command in degrees [-45, 45].
-        """
-        heading_error = normalize_angle(info.desired_heading - info.boat_heading)
-        desired_heading_wrapped = info.boat_heading + heading_error
 
-        state = np.array([[info.boat_heading], [info.boat_yaw_rate]])
+        Note:
+            This controller expects inputs in NAUTICAL convention (same as PID controller)
+            but internally converts to MATHEMATICAL convention for computation, since
+            the A, B matrices were derived in math convention.
+        """
+        # Convert from nautical (0=North) to math (0=East) convention
+        # Math convention: 0=East, counterclockwise positive
+        boat_heading_math = (np.pi/2 - info.boat_heading) % (2 * np.pi)
+        desired_heading_math = (np.pi/2 - info.desired_heading) % (2 * np.pi)
+        # Negate yaw_rate for math convention (counterclockwise positive)
+        yaw_rate_math = -info.boat_yaw_rate
+
+        heading_error = normalize_angle(desired_heading_math - boat_heading_math)
+        desired_heading_wrapped = boat_heading_math + heading_error
+
+        state = np.array([[boat_heading_math], [yaw_rate_math]])
         desired_output = np.array([[desired_heading_wrapped]])
 
         u = -self.K @ state + self.V @ desired_output
@@ -77,7 +90,8 @@ class LQRController:
 def get_lqr_controller(
     sim: "SailboatSimulation | None" = None,
     Q: np.ndarray | None = None, 
-    R: np.ndarray | None = None
+    R: np.ndarray | None = None,
+    logger = None,
 ) -> LQRController:
     """
     Create and return an LQRController instance.
@@ -100,6 +114,13 @@ def get_lqr_controller(
         B_discrete = np.array([[-5.62762090e-06],
                                [-1.12552418e-03]])
         dt_estimated = 0.005
+
+        if logger is not None:
+            logger.warning(
+                "LQR controller initialized with hardcoded dynamics matrices. "
+                "If simulation has changed, run 'python scripts/extract_dynamics.py' "
+                "and update the matrices in controller/lqr.py"
+            )
 
     # Convert discrete-time to continuous-time dynamics
     A = (A_discrete - np.eye(2)) / dt_estimated

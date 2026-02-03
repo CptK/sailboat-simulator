@@ -118,22 +118,18 @@ def main():
                 # Get current desired heading
                 current_desired_heading_deg = DESIRED_HEADINGS[heading_index]
 
-                # Convert desired heading from nautical (0=North) to mathematical (0=East) convention
-                # and then to radians, normalized to [0, 2π)
-                desired_heading_math_deg = 90 - current_desired_heading_deg
-                desired_heading_rad = np.radians(desired_heading_math_deg) % (2 * np.pi)
+                # Convert to radians, keeping nautical convention (0=North)
+                # Both PID and LQR controllers expect nautical convention
+                desired_heading_rad = np.radians(current_desired_heading_deg)
 
                 # Get current boat state
                 status = sim.get_status()
 
-                # Convert heading from nautical to mathematical convention and to radians
-                boat_heading_math_deg = 90 - status['heading']
-                boat_heading_rad = np.radians(boat_heading_math_deg) % (2 * np.pi)
+                # Convert to radians, keeping nautical convention
+                boat_heading_rad = np.radians(status['heading'])
+                wind_angle_rad = np.radians(status['wind_dir'])
 
-                # Convert wind direction to math convention and normalize to [0, 2π)
-                wind_angle_rad = np.radians(90 - status['wind_dir']) % (2 * np.pi)
-
-                # Create ControllerInfo for controller
+                # Create ControllerInfo for controller (all in nautical convention)
                 info = ControllerInfo(
                     boat_x=status['x'],
                     boat_y=status['y'],
@@ -141,7 +137,7 @@ def main():
                     boat_vel_x=status['vel_x'],
                     boat_vel_y=status['vel_y'],
                     boat_speed=status['speed'],
-                    boat_yaw_rate=-status['yaw_rate'],  # Negate to convert from nautical to math convention
+                    boat_yaw_rate=status['yaw_rate'],  # Keep nautical convention
                     wind_angle=wind_angle_rad,
                     wind_speed=status['wind_speed'],
                     desired_heading=desired_heading_rad,
@@ -160,7 +156,9 @@ def main():
                 sim.set_sail_angle(sail_deg)
 
                 # Update course line to show desired heading
-                sim.update_course_line(desired_heading_rad)
+                # update_course_line expects math convention (0=East), convert from nautical
+                desired_heading_math_rad = np.pi/2 - desired_heading_rad
+                sim.update_course_line(desired_heading_math_rad)
 
                 # Step physics multiple times for smoother visualization
                 for _ in range(5):
