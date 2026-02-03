@@ -3,6 +3,7 @@ from rclpy.node import Node
 import numpy as np
 
 from boat_msgs.msg import BoatInfo, RudderAngle, SailAngle, Wind, Heading
+from controller.lqr import get_lqr_controller
 from controller.pid import PIDController
 from controller.utils import ControllerInfo
 from controller.sail_controller import SailController
@@ -27,8 +28,8 @@ class ControllerNode(Node):
         - PID outputs DEGREES for direct publishing
     """
 
-    def __init__(self):
-        super().__init__('controller_node')
+    def __init__(self, **kwargs):
+        super().__init__('controller_node', automatically_declare_parameters_from_overrides=True, **kwargs)
 
         # Subscribe to boat and environment information
         self.create_subscription(BoatInfo, '/sense/boat_info', self._on_boat_info, 1)
@@ -44,7 +45,25 @@ class ControllerNode(Node):
         # Create Timer to run control loop at 100 Hz
         self.timer = self.create_timer(0.01, self._timer_callback)
 
-        self.rudder_controller = PIDController(kp=0.8, ki=0.0, kd=1.0)
+        rudder_controller_type: str = self.get_parameter('rudder_controller_type').value
+        if rudder_controller_type.upper() == 'LQR':
+            heading_error_weight: float = self.get_parameter('lqr_heading_error_weight').value
+            yaw_rate_weight: float = self.get_parameter('lqr_yaw_rate_weight').value
+            rudder_action_weight: float = self.get_parameter('lqr_rudder_action_weight').value
+            Q = np.diag([heading_error_weight, yaw_rate_weight])
+            R = np.array([[rudder_action_weight]])
+            self.rudder_controller = get_lqr_controller(Q=Q, R=R, logger=self.get_logger())
+            self.get_logger().info(f"LQR Controller initialized with Q={Q}, R={R}")
+        elif rudder_controller_type.upper() == 'PID':
+            KP: float = self.get_parameter('pid_kp').value
+            KI: float = self.get_parameter('pid_ki').value
+            KD: float = self.get_parameter('pid_kd').value
+            self.rudder_controller = PIDController(kp=KP, ki=KI, kd=KD)
+            self.get_logger().info(f"PID Controller initialized with Kp={KP}, Ki={KI}, Kd={KD}")
+        else:
+            self.get_logger().error(f"Unknown rudder_controller_type: {rudder_controller_type}. Defaulting to PID.")
+            self.rudder_controller = PIDController(kp=1.0, ki=0.0, kd=0.1)
+        
         self.sail_controller = SailController()
         self.info = ControllerInfo(desired_heading=np.deg2rad(300.0))
 

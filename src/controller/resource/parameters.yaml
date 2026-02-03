@@ -1,0 +1,15 @@
+controller_node:
+  ros__parameters:
+    # controller to use: "lqr" or "pid"
+    rudder_controller_type: "lqr"
+
+    # LQR CONTROLLER PARAMETERS
+    lqr_heading_error_weight: 0.5
+    lqr_yaw_rate_weight: 0.5
+    lqr_rudder_action_weight: 1.0
+
+    # PID CONTROLLER PARAMETERS
+    pid_kp: 0.8
+    pid_ki: 0.0
+    pid_kd: 1.0
+    
