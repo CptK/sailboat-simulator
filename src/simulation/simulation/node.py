@@ -1,6 +1,7 @@
 import rclpy
 from rclpy.node import Node
 import mujoco
+import mujoco.viewer
 import time
 import numpy as np
 
