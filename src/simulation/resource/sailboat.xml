@@ -13,8 +13,6 @@
     <texture name="sky_tex" type="skybox" builtin="gradient" rgb1="0.5 0.7 0.95" rgb2="1.0 1.0 1.0" width="512" height="512"/>
     <material name="water_mat" texture="water_tex" texrepeat="50 50" reflectance="0.5" specular="0.8" shininess="0.9"/>
     <material name="hull_mat" rgba="0.6 0.3 0.1 1"/>
-    <material name="bow_mat" rgba="0.9 0.9 0.95 1"/>
-    <material name="stern_mat" rgba="0.5 0.25 0.08 1"/>
     <material name="sail_mat" rgba="1 1 0.95 0.95"/>
     <material name="mast_mat" rgba="0.4 0.25 0.1 1"/>
   </asset>
