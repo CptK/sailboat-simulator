@@ -43,12 +43,12 @@
         <joint name="boat_pitch" type="hinge" axis="0 1 0" damping="500" stiffness="50000" springref="0"/>
 
         <!-- Hull -->
-        <!-- Main hull split into tapered sections so the bow narrows naturally -->
-        <geom name="hull_main" type="ellipsoid" size="0.95 0.27 0.18" pos="-0.30 0 0"
+        <!-- Main hull split into tapered box sections: flatter bottom and narrowing beam toward bow -->
+        <geom name="hull_main" type="box" size="0.92 0.30 0.14" pos="-0.32 0 0"
               mass="52" material="hull_mat" contype="0" conaffinity="0"/>
-        <geom name="hull_main_mid" type="ellipsoid" size="0.55 0.20 0.15" pos="0.45 0 0"
+        <geom name="hull_main_mid" type="box" size="0.55 0.24 0.12" pos="0.45 0 0"
               mass="20" material="hull_mat" contype="0" conaffinity="0"/>
-        <geom name="hull_main_fore" type="ellipsoid" size="0.28 0.12 0.10" pos="0.95 0 0"
+        <geom name="hull_main_fore" type="box" size="0.30 0.16 0.09" pos="0.95 0 0"
               mass="8" material="hull_mat" contype="0" conaffinity="0"/>
         <geom name="hull_bow" type="ellipsoid" size="0.55 0.07 0.06" pos="1.35 0 0" mass="10" material="bow_mat" contype="0" conaffinity="0"/>
         <geom name="hull_stern" type="box" size="0.20 0.30 0.18" pos="-1.15 0 0" mass="25" material="stern_mat" contype="0" conaffinity="0"/>
