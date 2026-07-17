@@ -218,7 +218,7 @@ docker pull ghcr.io/cptk/sailboat-simulator:main
 docker run -it --rm ghcr.io/cptk/sailboat-simulator:main
 
 # Inside container, run the simulation
-python scripts/run_simulation.py
+python3 scripts/run_simulation.py
 ```
 
 Available tags:
