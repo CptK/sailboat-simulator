@@ -1,0 +1,41 @@
+graph_route_planner_node:
+  ros__parameters:
+    # MAP
+    # KML map to plan on. Leave empty to use the map bundled in this package's
+    # assets/ directory. Polygons are classified by nesting depth: a lake is
+    # water, an island in it is land, a lake on that island is water again.
+    map_path: ""
+
+    # PLANNING CADENCE
+    # How often the planner checks for a mission waiting to be expanded (seconds).
+    # A mission is planned once, when it arrives; it is deliberately not replanned
+    # afterwards, because route_planner builds a fresh Mission from every route it
+    # receives, so republishing mid-course would send the boat back to via point 1.
+    # Planning is synchronous and takes ~0.1-0.6 s per leg, blocking this node.
+    plan_interval: 2.0
+
+    # SEARCH
+    # Clearance kept from the shoreline and from every island (in meters).
+    margin: 2.0
+
+    # Spacing of the open-water waypoint grid used for tacking (in meters).
+    # Smaller is more accurate and much slower: cost grows with the square.
+    grid_spacing: 6.0
+
+    # Nodes closer together than this are merged into one (in meters). 0 disables.
+    merge_threshold: 1.5
+
+    # Shortest leg the planner will consider (in meters). 0 disables.
+    # Raising it suppresses fiddly hops, but it filters edges, so a high value
+    # can disconnect the graph and leave no route at all.
+    min_leg_distance: 0.0
+
+    # Longest leg the planner will consider (in meters).
+    # 0 derives it from the map, which is the only value that never truncates a
+    # leg the boat could actually sail. A fixed limit below the map's longest
+    # crossing silently forces detours through waypoints that are not needed.
+    max_leg_distance: 0.0
+
+    # If inputs (goal, position, wind) are missing, the node warns. This is the
+    # minimum time between two such warnings in seconds, to avoid flooding the log.
+    time_between_missing_values_logs: 10.0

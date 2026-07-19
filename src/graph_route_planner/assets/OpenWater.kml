@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+<Document>
+	<name>Open Water</name>
+	<!--
+	  A featureless 160 x 160 m square of water, matching the open world the
+	  MuJoCo simulation uses. It exists so the graph planner has something to plan
+	  over in a scenario that has no land: the route is then shaped purely by the
+	  wind, tacking upwind and sailing straight otherwise.
+
+	  The square is symmetric about its own centre, and map_loader projects about
+	  the bounding-box centre, so map metres equal simulation metres one-for-one.
+	-->
+	<Placemark>
+		<name>Open Water</name>
+		<Polygon>
+			<outerBoundaryIs>
+				<LinearRing>
+					<coordinates>
+						8.650297995289982,49.876954748273256,0
+						8.652524004710017,49.876954748273256,0
+						8.652524004710017,49.87839325172674,0
+						8.650297995289982,49.87839325172674,0
+						8.650297995289982,49.876954748273256,0
+					</coordinates>
+				</LinearRing>
+			</outerBoundaryIs>
+		</Polygon>
+	</Placemark>
+</Document>
+</kml>

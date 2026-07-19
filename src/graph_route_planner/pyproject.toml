@@ -1,0 +1,7 @@
+# Packaging is handled by setup.py + package.xml (ament_python); this file only
+# configures the dev tooling.
+[tool.pytest.ini_options]
+# Without this, `pytest` cannot import `graph_route_planner` from the source
+# tree — only `python -m pytest` would, because that puts the CWD on sys.path.
+pythonpath = ["."]
+testpaths = ["test"]

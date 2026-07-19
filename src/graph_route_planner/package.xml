@@ -1,0 +1,24 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>graph_route_planner</name>
+  <version>1.0.0</version>
+  <description>Graph-based route planner: KML maps, wind-aware routing over a visibility graph</description>
+  <maintainer email="marcus.kornmann@sailingteam.tu-darmstadt.de">Marcus Kornmann</maintainer>
+  <license>TODO: License declaration</license>
+
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>boat_msgs</exec_depend>
+
+  <!--
+    shapely, pydantic and matplotlib are deliberately NOT declared as rosdep
+    keys. They are installed by pip from requirements.txt, and the Dockerfile
+    clears /var/lib/apt/lists before running `rosdep install`, so asking rosdep
+    for python3-shapely makes apt fail to locate it and the image build aborts.
+    Every other package in this workspace resolves its Python deps the same way.
+  -->
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
