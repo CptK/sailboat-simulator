@@ -201,8 +201,12 @@ def compute_sail_forces(
             if true_wind_to_boat != 0:
                 # How far off head-to-wind (0 at head-to-wind, grows as we deviate)
                 off_center = np.pi - abs(true_wind_to_boat)  # 0 to 40° in no-go zone
-                # Turn away from wind - stronger as we're further off center
-                natural_turn = -np.sign(true_wind_to_boat) * wind_pressure * off_center * 2.0
+                # Turn away from wind - stronger as we're further off center.
+                # Head-to-wind is an unstable equilibrium: wind blowing to
+                # +170° rel. (i.e. from just starboard of the bow) must yaw
+                # the bow to port (+), so the torque carries the sign of
+                # true_wind_to_boat.
+                natural_turn = np.sign(true_wind_to_boat) * wind_pressure * off_center * 2.0
                 forces.yaw += natural_turn
 
         return forces
@@ -282,19 +286,26 @@ def compute_rudder_forces(boat: BoatState, params: PhysicsParams) -> Forces:
     """
     Compute turning force from rudder.
 
-    Hydrodynamic lift proportional to V².
+    Hydrodynamic lift proportional to V|V| of the longitudinal flow, so the
+    yaw moment reverses when the boat makes sternway (steering in reverse is
+    inverted, which is how a real boat backs out of irons).
     """
     forces = Forces()
-    speed = get_boat_speed(boat)
 
-    if speed < 0.05:
+    # Signed longitudinal flow over the rudder (negative = making sternway)
+    vel_forward = (
+        np.cos(boat.heading) * boat.velocity[0] +
+        np.sin(boat.heading) * boat.velocity[1]
+    )
+
+    if abs(vel_forward) < 0.05:
         return forces
 
     rudder_angle_rad = np.radians(boat.rudder_angle)
 
-    # Hydrodynamic force: F = 0.5 * rho * V² * A * C * sin(angle)
+    # Hydrodynamic force: F = 0.5 * rho * V|V| * A * C * sin(angle)
     rudder_force = (
-        0.5 * params.water_density * speed ** 2 *
+        0.5 * params.water_density * vel_forward * abs(vel_forward) *
         params.rudder_area * params.rudder_cl * np.sin(rudder_angle_rad)
     )
 
