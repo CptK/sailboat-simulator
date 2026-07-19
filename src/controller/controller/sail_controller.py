@@ -29,8 +29,10 @@ class SailController:
         apparent_wind_angle = (apparent_wind_angle + np.pi) % (2 * np.pi) - np.pi  # Normalize to [-pi, pi]
         apparent_wind_deg = abs(np.degrees(apparent_wind_angle))
 
-        # Stall recovery: if stuck in irons, open sail to catch wind when bow falls off
-        if boat_speed is not None and boat_speed < 0.5 and apparent_wind_deg < 50:
+        # Stall recovery: if stuck in irons, open sail to catch wind when bow falls off.
+        # Only inside the no-go zone (within 40° of head-to-wind) - a close-hauled
+        # course at 40-50° is sailable and just needs normal tight trim.
+        if boat_speed is not None and boat_speed < 0.5 and apparent_wind_deg < 40:
             return 60.0
 
         # Sail angle based on apparent wind angle

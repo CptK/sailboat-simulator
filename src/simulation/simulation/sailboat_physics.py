@@ -124,10 +124,6 @@ def compute_sail_forces(
     # Apparent wind angle in world frame (direction wind is blowing TO)
     apparent_wind_angle = np.arctan2(apparent_wind[1], apparent_wind[0])
 
-    # Wind angle relative to boat (0 = from stern, pi = from bow)
-    wind_to_boat_angle = normalize_angle(apparent_wind_angle - boat.heading)
-    abs_wind_angle = abs(wind_to_boat_angle)
-
     # Sail angle directly specifies max boom swing (0=tight, 90=fully out)
     max_sail_angle = np.radians(sail.sail_angle)
 
@@ -135,50 +131,51 @@ def compute_sail_forces(
     # The sheet is a LIMIT, not a spring. The wind pushes the boom freely
     # until the sheet goes taut (boom reaches max_sail_angle).
 
-    # Wind always pushes boom to leeward (away from wind source)
-    # wind_to_boat_angle > 0 means wind blows toward port, so boom goes to port
-    if wind_to_boat_angle > 0:
-        leeward_direction = -1  # Boom to port (negative angles)
-    else:
-        leeward_direction = +1  # Boom to starboard (positive angles)
+    # Sail chord direction in world frame (boom points aft from mast)
+    sail_chord_angle = boat.heading + np.pi + boat.boom_angle
 
-    # Wind torque on boom - always pushes toward leeward
+    # Angle of attack: angle between apparent wind and sail chord
+    angle_of_attack = normalize_angle(apparent_wind_angle - sail_chord_angle)
+    aoa_magnitude = abs(angle_of_attack)
+
+    # Wind torque on the boom is proportional to the wind component normal to
+    # the sail (sin of angle of attack). With a slack sheet the boom therefore
+    # settles at the luffing position (AoA = 0, sail streaming with the wind)
+    # instead of being driven past it to the sheet limit and backwinded.
     wind_pressure = 0.5 * params.air_density * apparent_speed ** 2
-    wind_torque_on_boom = wind_pressure * params.sail_area * 0.8 * leeward_direction
+    wind_torque_on_boom = (
+        wind_pressure * params.sail_area * 0.8 * np.sin(angle_of_attack)
+    )
 
-    # Current boom position relative to limits
-    boom_at_leeward_limit = (
-        (leeward_direction < 0 and boat.boom_angle <= -max_sail_angle) or
-        (leeward_direction > 0 and boat.boom_angle >= max_sail_angle)
-    )
-    boom_at_windward_limit = (
-        (leeward_direction < 0 and boat.boom_angle >= max_sail_angle) or
-        (leeward_direction > 0 and boat.boom_angle <= -max_sail_angle)
-    )
+    boom_sign = np.sign(boat.boom_angle)
+    wind_pushes_outward = np.sign(wind_torque_on_boom) == boom_sign
 
     # Apply boom torque
-    if boom_at_leeward_limit:
+    if abs(boat.boom_angle) >= max_sail_angle and wind_pushes_outward:
         # Sheet is taut - boom can't swing further out
         # Apply small restoring force to keep it at limit (sheet tension)
         sheet_tension = (abs(boat.boom_angle) - max_sail_angle) * 200
-        forces.boom = -sheet_tension * np.sign(boat.boom_angle)
+        forces.boom = -sheet_tension * boom_sign
     else:
-        # Sheet is slack - boom swings freely with wind
+        # Sheet is slack - boom swings freely toward the luffing position
         forces.boom = wind_torque_on_boom
 
-        # Add small centering force if boom is on wrong side (wind shifted)
-        if (leeward_direction < 0 and boat.boom_angle > 0) or \
-           (leeward_direction > 0 and boat.boom_angle < 0):
-            # Boom is to windward - wind pushes it across
-            forces.boom = wind_torque_on_boom * 2  # Extra push to cross centerline
+    # The sail only drives the boat when it is filled against a taut sheet
+    sheet_is_taut = (
+        abs(boat.boom_angle) >= max_sail_angle * 0.95 and wind_pushes_outward
+    )
 
     # === SAIL FORCE ON BOAT ===
     # Only generate propulsive force when sheet is taut (boom at limit)
     # and we're not in the no-go zone
 
-    sheet_is_taut = abs(boat.boom_angle) >= max_sail_angle * 0.95
+    # The no-go zone is evaluated on TRUE wind: apparent wind always shifts
+    # forward as the boat accelerates, so an apparent-wind test would stall a
+    # boat sailing a perfectly good close-hauled course. Whether a course is
+    # sailable is a true-wind property. (0 = wind from stern, pi = from bow)
+    true_wind_to_boat = normalize_angle(wind.direction + np.pi - boat.heading)
 
-    if abs_wind_angle > params.no_go_zone:
+    if abs(true_wind_to_boat) > params.no_go_zone:
         # In irons - sail luffs, minimal backward drift but boat turns off wind
         #
         # Real behavior: backward drift is only 1-3% of wind speed (very small)
@@ -189,10 +186,6 @@ def compute_sail_forces(
         backward_drag = 0.5 * params.air_density * apparent_speed ** 2 * params.sail_area * 0.015
         forces.fx += -backward_drag * np.cos(boat.heading)
         forces.fy += -backward_drag * np.sin(boat.heading)
-
-        # Wind pressure for turning moments (separate from drift force)
-        # The wind pushing on hull, rigging, and flapping sail creates yaw
-        wind_pressure = 0.5 * params.air_density * apparent_speed ** 2
 
         # The boom position determines escape direction
         # Sailor holds boom to desired side to turn that way
@@ -205,11 +198,11 @@ def compute_sail_forces(
             # Boom centered - natural tendency to fall off wind
             # "the wind will force the bow to fall off, forcing the boat into a turn"
             # This comes from asymmetric wind loading on hull and rigging
-            if wind_to_boat_angle != 0:
+            if true_wind_to_boat != 0:
                 # How far off head-to-wind (0 at head-to-wind, grows as we deviate)
-                off_center = np.pi - abs_wind_angle  # 0 to 40° in no-go zone
+                off_center = np.pi - abs(true_wind_to_boat)  # 0 to 40° in no-go zone
                 # Turn away from wind - stronger as we're further off center
-                natural_turn = -np.sign(wind_to_boat_angle) * wind_pressure * off_center * 2.0
+                natural_turn = -np.sign(true_wind_to_boat) * wind_pressure * off_center * 2.0
                 forces.yaw += natural_turn
 
         return forces
@@ -218,13 +211,6 @@ def compute_sail_forces(
         # Sheet is slack - sail flaps, no propulsive force on boat
         # (all wind energy goes into swinging the boom)
         return forces
-
-    # Sail chord direction in world frame (boom points aft from mast)
-    sail_chord_angle = boat.heading + np.pi + boat.boom_angle
-
-    # Angle of attack: angle between apparent wind and sail chord
-    angle_of_attack = normalize_angle(apparent_wind_angle - sail_chord_angle)
-    aoa_magnitude = abs(angle_of_attack)
 
     # Lift and drag coefficients as continuous functions of angle of attack.
     # Real cambered sails generate lift over a wide range of angles:
