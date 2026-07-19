@@ -19,7 +19,7 @@ each one to the next.
                    ├─>  graph_route_planner  ──> /planning/target_route
 /sense/wind       ─┘                                      │
                                                           v
-                                                    route_planner ──> /planning/desired_heading
+                                                    route_follower ──> /planning/desired_heading
 ```
 
 | direction | topic | type |
@@ -29,13 +29,14 @@ each one to the next.
 | pub | `/planning/target_route` | `boat_msgs/Route` — the expanded route (latched) |
 
 A mission is planned **once**, when it arrives, using the wind known at that
-moment. It is deliberately not replanned afterwards: `route_planner` builds a
-fresh `Mission` from every route it receives, so republishing mid-course would
-send the boat back to the first via point.
+moment. It is deliberately not replanned afterwards: the follower restarts
+from the first waypoint of every route it receives, so republishing mid-course
+would send the boat back to the start of the mission.
 
 The route is latched (`TRANSIENT_LOCAL`), so a follower that starts late — or
-restarts — still receives it. That still satisfies `route_planner`'s
-default-QoS subscription.
+restarts — still receives it. In the simulation this planner is paired with
+`route_follower`, which steers the route without re-planning it (see
+`launch/launch_graph.py`).
 
 ## Running
 

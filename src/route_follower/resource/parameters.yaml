@@ -1,0 +1,32 @@
+route_follower_node:
+  ros__parameters:
+    # The interval in which the steering step runs (in seconds).
+    step_interval: 0.2
+
+    # The radius around a waypoint within which it counts as reached (in meters).
+    dist_threshold: 5
+
+    # The heading error, in degrees, above which the boat tacks or jibes onto the
+    # new leg rather than simply turning. Below it, it steers directly.
+    maneuver_threshold: 70
+
+    # The wind speed above which jibing is considered unsafe, so a tack is used
+    # instead (in km/h).
+    safe_jibe_threshold: 15
+
+    # The step size in degrees used to swing the heading during a maneuver.
+    maneuver_heading_step_size: 10
+
+    # Multiplier applied to the maneuver heading step size for the command sent
+    # to the boat.
+    command_step_size_multiplier: 1.5
+
+    # The tolerance in degrees allowed for the boat's heading during a maneuver.
+    heading_tolerance: 2
+
+    # The maximum number of steps to cross the wind when tacking before the
+    # maneuver is considered stuck and a jibe is tried instead.
+    max_steps_to_cross_wind_when_tacking: 500
+
+    # Minimum seconds between repeated warnings about missing inputs.
+    time_between_missing_values_logs: 10

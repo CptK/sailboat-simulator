@@ -1,14 +1,18 @@
-"""The full stack, but with the graph planner expanding the mission.
+"""The full stack with a clean planner/steering split.
 
-Same as launch.py — simulation, controller, route_planner — plus
-graph_route_planner sitting in front of route_planner:
+launch.py uses route_planner, which both plans and steers. This launch splits
+those two jobs across two nodes:
 
-    /planning/mission ──> graph_route_planner ──> /planning/target_route ──> route_planner
+    /planning/mission ──> graph_route_planner ──> /planning/target_route ──> route_follower ──> /planning/desired_heading
 
-launch.py has whoever sets the course publish /planning/target_route directly,
-so route_planner sails straight between the via points. Here the via points go
-to /planning/mission instead, and the graph planner works out the water between
-them — tacking upwind where a direct heading is unsailable.
+  * graph_route_planner  plans the route: it expands the mission's via points
+    into a detailed path over the water, tacking upwind where needed.
+  * route_follower        steers along that route exactly as given, without
+    re-planning it, executing tacks and jibes as legs cross the wind.
+
+So route_planner is not used here at all — route_follower replaces its steering
+role, and graph_route_planner replaces its planning role. The simulation and
+controller are the same as in launch.py.
 """
 
 from launch import LaunchDescription
@@ -39,12 +43,12 @@ def generate_launch_description():
             ])
         )
     )
-    route_planner_launch = IncludeLaunchDescription(
+    route_follower_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             PathJoinSubstitution([
-                FindPackageShare('route_planner'),
+                FindPackageShare('route_follower'),
                 'launch',
-                'route_planner.launch.py',
+                'route_follower.launch.py',
             ])
         )
     )
@@ -80,6 +84,6 @@ def generate_launch_description():
     return LaunchDescription([
         simulation_launch,
         controller_launch,
-        route_planner_launch,
+        route_follower_launch,
         graph_route_planner_node,
     ])

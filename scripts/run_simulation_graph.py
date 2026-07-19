@@ -197,12 +197,13 @@ def main():
     print(f"\n[5/5] Waiting {PLANNING_DELAY}s for the planner to expand the mission...")
     time.sleep(PLANNING_DELAY)
     try:
-        # The route publisher is RELIABLE with depth-1 history, so it re-delivers
-        # its last route to this late-joining reader; a default (volatile) echo
-        # is what receives it. Requesting transient_local here does NOT, in this
-        # rmw, so the readback deliberately uses the default QoS.
+        # The route is latched (RELIABLE + TRANSIENT_LOCAL), and it was published
+        # seconds ago, so this late-joining reader must match BOTH of those to be
+        # handed the held sample. A default reader receives it only by luck, and
+        # setting durability alone (without reliability) matches neither.
         result = subprocess.run(
             ["ros2", "topic", "echo", "--once", "--timeout", "10",
+             "--qos-reliability", "reliable", "--qos-durability", "transient_local",
              "/planning/target_route", "boat_msgs/msg/Route"],
             capture_output=True, text=True, timeout=15,
         )

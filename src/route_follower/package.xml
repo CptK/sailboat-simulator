@@ -1,0 +1,24 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>route_follower</name>
+  <version>1.0.0</version>
+  <description>Steers the boat along a fixed route, executing tacks and jibes without re-planning</description>
+  <maintainer email="marcus.kornmann@sailingteam.tu-darmstadt.de">Marcus Kornmann</maintainer>
+  <license>TODO: License declaration</license>
+
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>boat_msgs</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+
+  <!-- The tack/jibe maneuver code (maneuver_action.py, waypoint.py, utils.py) is
+       copied from route_planner, not imported, so this package is self-contained.
+       pydantic/numpy/shapely come via pip (requirements.txt); see
+       graph_route_planner's package.xml for why they are not rosdep keys. -->
+
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
