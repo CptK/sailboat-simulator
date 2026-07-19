@@ -6,13 +6,33 @@ graph_route_planner_node:
     # water, an island in it is land, a lake on that island is water again.
     map_path: ""
 
+    # BOAT
+    # The closest the boat can sail to the wind, in degrees. Legs inside this
+    # angle cannot be sailed directly and are tacked instead.
+    # This matches route_planner's min_tack_angle so the two plan alike. Note
+    # that route_planner silently adds 5 degrees to its own value when deciding
+    # whether a leg is sailable; this planner uses the number as given, because
+    # it has a real polar diagram and does not need that safety fudge.
+    min_tack_angle: 50
+
     # PLANNING CADENCE
-    # How often the planner checks for a mission waiting to be expanded (seconds).
-    # A mission is planned once, when it arrives; it is deliberately not replanned
-    # afterwards, because route_planner builds a fresh Mission from every route it
-    # receives, so republishing mid-course would send the boat back to via point 1.
+    # How often the planner checks whether it should (re)plan, in seconds.
     # Planning is synchronous and takes ~0.1-0.6 s per leg, blocking this node.
     plan_interval: 2.0
+
+    # REPLANNING
+    # The radius around a via point within which it counts as rounded (in meters).
+    # Keep this equal to route_follower's dist_threshold so both agree on progress.
+    dist_threshold: 5
+
+    # How far the boat may drift from the planned route before it is replanned
+    # (in meters). A replan starts from the boat's current position and covers
+    # only the via points still ahead.
+    off_course_threshold: 10
+
+    # The minimum time between two replans, in seconds, so a persistent trigger
+    # cannot thrash the planner.
+    min_time_between_replanning: 5.0
 
     # SEARCH
     # Clearance kept from the shoreline and from every island (in meters).
@@ -36,6 +56,6 @@ graph_route_planner_node:
     # crossing silently forces detours through waypoints that are not needed.
     max_leg_distance: 0.0
 
-    # If inputs (goal, position, wind) are missing, the node warns. This is the
+    # If inputs (mission, position, wind) are missing, the node warns. This is the
     # minimum time between two such warnings in seconds, to avoid flooding the log.
     time_between_missing_values_logs: 10.0

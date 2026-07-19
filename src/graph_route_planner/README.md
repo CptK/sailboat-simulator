@@ -26,12 +26,23 @@ each one to the next.
 |---|---|---|
 | sub | `/planning/mission` | `boat_msgs/Route` — the via points to round |
 | sub | `/sense/wind` | `boat_msgs/Wind` — bearing drives the polar |
+| sub | `/sense/boat_info` | `boat_msgs/BoatInfo` — where to plan from, and progress |
 | pub | `/planning/target_route` | `boat_msgs/Route` — the expanded route (latched) |
 
-A mission is planned **once**, when it arrives, using the wind known at that
-moment. It is deliberately not replanned afterwards: the follower restarts
-from the first waypoint of every route it receives, so republishing mid-course
-would send the boat back to the start of the mission.
+### Replanning
+
+Deciding the path is this node's job alone, including when it goes stale. It
+replans when the boat drifts more than `off_course_threshold` from the planned
+route, or when the wind shifts enough that a leg is no longer sailable —
+mirroring the triggers route_planner used — rate-limited by
+`min_time_between_replanning`.
+
+Every route it publishes **starts at the boat's current position** and covers
+only the via points still ahead. That matters: the follower restarts at the
+first waypoint of whatever route it receives, so a replan beginning at the
+original start would send the boat back to the beginning of the mission. Via
+points are counted as rounded using the same `dist_threshold` the follower
+uses, so the two agree on progress.
 
 The route is latched (`TRANSIENT_LOCAL`), so a follower that starts late — or
 restarts — still receives it. In the simulation this planner is paired with
