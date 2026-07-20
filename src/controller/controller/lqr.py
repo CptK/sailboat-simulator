@@ -109,10 +109,8 @@ def get_lqr_controller(
         A_discrete, B_discrete, dt_estimated = sim.get_heading_dynamics()
     else:
         # Fallback to hardcoded values (for backward compatibility)
-        A_discrete = np.array([[1.00000000e+00, 4.99957821e-03],
-                               [-3.99031927e-15, 9.99915642e-01]])
-        B_discrete = np.array([[-5.62762090e-06],
-                               [-1.12552418e-03]])
+        A_discrete = np.array([[1.00000000e+00, 4.99936228e-03], [1.49951301e-14, 9.99872455e-01]])
+        B_discrete = np.array([[-8.50877799e-06], [-1.70175560e-03]])
         dt_estimated = 0.005
 
         if logger is not None:

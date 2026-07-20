@@ -34,7 +34,7 @@ MISSION = [(-10.0, 60.0), (-10.0, -10.0), (60.0, -10.0), (60.0, 60.0), (-10.0, 6
 
 @pytest.fixture(scope="module")
 def water():
-    return load_kml(str(MAPS_DIR / "OpenWaterCourse.kml")).water
+    return load_kml(str(MAPS_DIR / "OpenWater.kml")).water
 
 
 @pytest.fixture

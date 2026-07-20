@@ -3,21 +3,18 @@
 <Document>
 	<name>Open Water</name>
 	<!--
-	  A featureless 240 x 240 m square of water.
+	  The 240 x 240 m square of water is the same. Inside it sits the 50 x 50 m
+	  square marked by the four buoys, at local metres (0,0)-(50,50). It is
+	  nested one level deep, so map_loader classifies it as land: the planner
+	  routes around it and no leg may cross it, tacking included. Without it the
+	  upwind leg tacks straight through the middle of the course.
 
-	  It exists so the graph planner has something to plan over in a scenario
-	  that has no land: the route is then shaped purely by the wind, tacking
-	  upwind and sailing straight otherwise.
+	  The nested square does not extend the bounding box, so the projection
+	  origin matches OpenWater.kml and map metres still equal simulation metres.
 
-	  The square is symmetric about its own centre, and map_loader projects about
-	  the bounding-box centre, so map metres equal simulation metres one-for-one.
-
-	  Size is a planner-side choice, not a physical one. The MuJoCo water plane
-	  in simulation/resource/sailboat.xml is 400 x 400 m and has contype=0, so
-	  nothing stops the boat at any edge — this square only bounds where the
-	  planner is willing to route. 240 m is where route quality stops improving
-	  for the standard mission; past it the search costs more and returns the
-	  same route, because planning time grows with the fourth power of the side.
+	  The island is drawn on the buoys exactly; clearance comes from the
+	  planner's `margin` parameter, which erodes the water away from every
+	  shoreline and island at once.
 	-->
 	<Placemark>
 		<name>Open Water</name>
@@ -30,6 +27,22 @@
 						8.653080507,49.878752878,0
 						8.649741493,49.878752878,0
 						8.649741493,49.876595122,0
+					</coordinates>
+				</LinearRing>
+			</outerBoundaryIs>
+		</Polygon>
+	</Placemark>
+	<Placemark>
+		<name>Course Area</name>
+		<Polygon>
+			<outerBoundaryIs>
+				<LinearRing>
+					<coordinates>
+						8.651411000,49.877674000,0
+						8.652106628,49.877674000,0
+						8.652106628,49.878123532,0
+						8.651411000,49.878123532,0
+						8.651411000,49.877674000,0
 					</coordinates>
 				</LinearRing>
 			</outerBoundaryIs>

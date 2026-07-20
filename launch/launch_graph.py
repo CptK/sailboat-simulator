@@ -33,7 +33,7 @@ def generate_launch_description():
     open_water_map = PathJoinSubstitution([
         FindPackageShare('graph_route_planner'),
         'assets',
-        'OpenWaterCourse.kml',
+        'OpenWater.kml',
     ])
 
     simulation_launch = IncludeLaunchDescription(
