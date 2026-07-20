@@ -4,12 +4,34 @@ controller_node:
     rudder_controller_type: "lqr"
 
     # LQR CONTROLLER PARAMETERS
-    lqr_heading_error_weight: 5.0
+    #
+    # Costs are over the state [heading error, yaw rate] and the rudder angle,
+    # all in radians. The plant they are solved against is the boat's real yaw
+    # dynamics at lqr_design_speed (see controller/lqr.py).
+    #
+    # R sets the character of the loop. It buys damping at the cost of turn
+    # rate, and the useful range is narrow:
+    #   R = 1    poles -1.4, -2.8     snappy, ~48 deg overshoot on a tack
+    #   R = 4    poles -1.4 +/-0.16j  no overshoot, tacks in ~3 s   <-- chosen
+    #   R = 15   poles -0.8, -1.4     no overshoot, tacks in ~4.2 s
+    #   R = 40   poles -0.5, -1.4     sluggish, ~6 s to come about
+    # Below about R = 2 the boat overshoots every new heading; above about 15
+    # it turns too slowly to be relied on to clear a waypoint.
+    lqr_heading_error_weight: 1.0
     lqr_yaw_rate_weight: 0.5
-    lqr_rudder_action_weight: 1.0
+    lqr_rudder_action_weight: 4.0
+
+    # Speed, in m/s, the gains are linearised at. Rudder moment goes as speed
+    # squared, so the command is rescaled by (design_speed / speed)^2 at run
+    # time and the loop behaves the same at 1 m/s as it does at 4.
+    lqr_design_speed: 2.0
+
+    # Ceiling on that rescaling, for when the boat is barely moving. 4.0 means
+    # the gains stop growing below 1 m/s, where the rudder is against its stop
+    # anyway and more gain only adds chatter.
+    lqr_max_gain_boost: 4.0
 
     # PID CONTROLLER PARAMETERS
     pid_kp: 0.8
     pid_ki: 0.0
     pid_kd: 1.0
-    

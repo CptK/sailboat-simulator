@@ -50,9 +50,14 @@ class ControllerNode(Node):
             heading_error_weight: float = self.get_parameter('lqr_heading_error_weight').value
             yaw_rate_weight: float = self.get_parameter('lqr_yaw_rate_weight').value
             rudder_action_weight: float = self.get_parameter('lqr_rudder_action_weight').value
+            design_speed: float = self.get_parameter('lqr_design_speed').value
+            max_gain_boost: float = self.get_parameter('lqr_max_gain_boost').value
             Q = np.diag([heading_error_weight, yaw_rate_weight])
             R = np.array([[rudder_action_weight]])
-            self.rudder_controller = get_lqr_controller(Q=Q, R=R, logger=self.get_logger())
+            self.rudder_controller = get_lqr_controller(
+                Q=Q, R=R, logger=self.get_logger(),
+                design_speed=design_speed, max_gain_boost=max_gain_boost,
+            )
             self.get_logger().info(f"LQR Controller initialized with Q={Q}, R={R}")
         elif rudder_controller_type.upper() == 'PID':
             KP: float = self.get_parameter('pid_kp').value
