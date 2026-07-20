@@ -25,8 +25,11 @@ route_follower_node:
     heading_tolerance: 2
 
     # The maximum number of steps to cross the wind when tacking before the
-    # maneuver is considered stuck and a jibe is tried instead.
-    max_steps_to_cross_wind_when_tacking: 500
+    # maneuver is considered stuck and a jibe is tried instead. One step per
+    # step_interval, so 40 is about 8 seconds of failing to come through the
+    # wind — long enough for a slow tack in light air, short enough that the
+    # boat does not sit head to wind for a minute and a half before jibing.
+    max_steps_to_cross_wind_when_tacking: 40
 
     # Minimum seconds between repeated warnings about missing inputs.
     time_between_missing_values_logs: 10

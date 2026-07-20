@@ -151,13 +151,47 @@ class RouteFollower(Node):
 
     # ── subscriptions ─────────────────────────────────────────────────────────
 
+    def _prospective_target(self, route: list[WayPoint]) -> WayPoint | None:
+        """The waypoint `_step` will steer at once it has skipped reached ones.
+
+        Every published route starts at the boat, so the first waypoint is
+        always already reached; this reproduces the skip without waiting a tick.
+        """
+        if not route:
+            return None
+        if self.location is None:
+            return route[0]
+        for waypoint in route:
+            if self.location.distance(waypoint) >= self.config.dist_threshold:
+                return waypoint
+        return route[-1]
+
     def _on_target_route(self, msg: RouteMsg) -> None:
-        """Accept a new route to follow, replacing any current one."""
-        self.route = [WayPoint(float(wp.east), float(wp.north)) for wp in msg.waypoints]
+        """Accept a new route to follow, replacing any current one.
+
+        A maneuver in progress survives if the new route still steers at the
+        same place. The planner republishes on every replan, and a tack that
+        restarts each time never accumulates the steps `is_stuck` counts — so it
+        would pinch head to wind forever instead of falling back to a jibe.
+        """
+        route = [WayPoint(float(wp.east), float(wp.north), is_soft=bool(wp.is_soft))
+                 for wp in msg.waypoints]
+
+        old_target = (self.route[self.target_index]
+                      if self.route and self.target_index < len(self.route) else None)
+        new_target = self._prospective_target(route)
+        same_leg = (old_target is not None and new_target is not None
+                    and old_target.distance(new_target) < self.config.dist_threshold)
+
+        self.route = route
         self.target_index = 0
-        self.maneuver = None
+        if not same_leg:
+            self.maneuver = None
         self.completed = False
-        self.get_logger().info(f"Following new route: {len(self.route)} waypoints")
+        self.get_logger().info(
+            f"Following new route: {len(self.route)} waypoints"
+            + (" (continuing the maneuver in progress)" if same_leg and self.maneuver else "")
+        )
 
         # Echo it on current_route, which the simulation renders.
         self._publisher_current_route.publish(msg)
@@ -216,6 +250,7 @@ class RouteFollower(Node):
         Returns:
             The desired heading, degrees.
         """
+        self._skip_reached_soft_waypoints(location)
         target = self.route[self.target_index]
 
         # Advance when the current waypoint is reached.
@@ -259,6 +294,35 @@ class RouteFollower(Node):
 
         # Otherwise sail straight at the waypoint.
         return desired_heading
+
+    def _skip_reached_soft_waypoints(self, location: WayPoint) -> None:
+        """Drop tacking corners the boat no longer needs, having arrived anyway.
+
+        A soft waypoint exists only to get the boat somewhere. Once the next
+        hard waypoint is within reach, every soft one before it has been made
+        pointless — and steering at them means sailing back down the course to
+        visit a point that was never a real destination.
+
+        The scan stops at the first hard waypoint, so a mark can never be
+        skipped: being near the *next* mark is what licenses the skip, and
+        rounding marks in order is the whole point of a course.
+        """
+        if not self.route or self.target_index >= len(self.route):
+            return
+        if not self.route[self.target_index].is_soft:
+            return
+
+        for index in range(self.target_index, len(self.route)):
+            if self.route[index].is_soft:
+                continue
+            if location.distance(self.route[index]) < self.config.dist_threshold:
+                self.get_logger().info(
+                    f"Within reach of waypoint {index}; skipping "
+                    f"{index - self.target_index} soft waypoint(s)"
+                )
+                self.target_index = index
+                self.maneuver = None      # the skipped leg's maneuver is moot
+            break                          # only the next hard waypoint counts
 
     def _select_maneuver(self, location: WayPoint, target: WayPoint,
                          current_heading: float, wind_direction: float,

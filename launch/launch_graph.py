@@ -25,6 +25,17 @@ def generate_launch_description():
     from launch.launch_description_sources import PythonLaunchDescriptionSource
     from launch.actions import IncludeLaunchDescription
 
+    # One map, two consumers: the planner routes around its land, and the
+    # simulation draws that same land on the water. Passing the same path to
+    # both is what keeps the picture honest — if the two ever disagree about
+    # the frame, the boat will visibly sail over an obstacle instead of it
+    # going unnoticed.
+    open_water_map = PathJoinSubstitution([
+        FindPackageShare('graph_route_planner'),
+        'assets',
+        'OpenWaterCourse.kml',
+    ])
+
     simulation_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             PathJoinSubstitution([
@@ -32,7 +43,8 @@ def generate_launch_description():
                 'launch',
                 'simulation.launch.py',
             ])
-        )
+        ),
+        launch_arguments={'map_path': open_water_map}.items(),
     )
     controller_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -58,11 +70,6 @@ def generate_launch_description():
         'resource',
         'parameters.yaml',
     ])
-    open_water_map = PathJoinSubstitution([
-        FindPackageShare('graph_route_planner'),
-        'assets',
-        'OpenWater.kml',
-    ])
 
     graph_route_planner_node = Node(
         package='graph_route_planner',
@@ -76,7 +83,7 @@ def generate_launch_description():
                 'map_path': open_water_map,
                 # Coarser than the pond default: this map is 160x160 m, and the
                 # grid is laid over the whole of it, so cost grows with the area.
-                'grid_spacing': 8.0,
+                'grid_spacing': 10.0,
             },
         ],
     )

@@ -23,10 +23,11 @@ in. Nothing in the stack carries a geodetic reference to check that against, so
 if the two ever diverge the routes will be silently offset.
 """
 
+import math
 from datetime import datetime, timedelta
 
 import rclpy
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from shapely.geometry import LineString, Point
@@ -41,10 +42,10 @@ from boat_msgs.msg import Wind
 from graph_route_planner import DEFAULT_MAP
 from graph_route_planner.map_loader import SailMap, load_kml
 from graph_route_planner.planner import (
+    CachedPlanner,
     NoWaterError,
     PlannerConfig,
     Position,
-    plan_route,
 )
 from graph_route_planner.sailing import SailingModel
 
@@ -85,6 +86,10 @@ class Config(BaseModel):
     min_time_between_replanning: float = Field(
         ..., ge=0, description="Minimum seconds between two replans"
     )
+    no_go_replan_margin: float = Field(
+        5.0, ge=0,
+        description="Degrees inside the no-go zone before drift triggers a replan",
+    )
 
     # Search tuning — see PlannerConfig for what each one does.
     margin: float = Field(..., gt=0, description="Shore clearance must be larger than 0")
@@ -96,11 +101,25 @@ class Config(BaseModel):
         ge=0,
         description="Longest leg in metres; 0 derives it from the map, which never truncates",
     )
+    segment_cost: float = Field(
+        1.0, ge=0,
+        description="Fixed time charge per route leg, biasing the search toward fewer turns",
+    )
 
     # Logging
     time_between_missing_values_logs: float = Field(
         5.0, ge=0, description="Seconds between repeated warnings about missing inputs"
     )
+
+    @model_validator(mode="after")
+    def validate_no_go_margin(self) -> "Config":
+        if self.no_go_replan_margin >= self.min_tack_angle:
+            raise ValueError(
+                f"no_go_replan_margin ({self.no_go_replan_margin}) must be below "
+                f"min_tack_angle ({self.min_tack_angle}), or drift can never "
+                f"trigger a replan at all"
+            )
+        return self
 
     @field_validator("plan_interval")
     @classmethod
@@ -129,6 +148,7 @@ class Config(BaseModel):
             merge_threshold=self.merge_threshold,
             min_leg_distance=self.min_leg_distance,
             max_leg_distance=self.max_leg_distance or None,
+            segment_cost=self.segment_cost,
         )
 
     def __str__(self) -> str:
@@ -163,6 +183,13 @@ class GraphRoutePlanner(Node):
             self.get_logger().error(f"Could not load map: {err}")
             return
 
+        # The planner keeps its visibility graph between calls. Building it is
+        # ~96% of a plan and depends only on the map and the search settings,
+        # both fixed for this node's lifetime — so it happens once, on the first
+        # plan, and every later plan reuses it. A wind change re-costs it; a new
+        # boat position is attached with a single O(n) pass.
+        self.planner = CachedPlanner(self.map.water, self.config.to_planner_config())
+
         self.boat: Position | None = None
         self.wind_direction: float | None = None
 
@@ -174,6 +201,11 @@ class GraphRoutePlanner(Node):
 
         self.planned_route: list[Position] | None = None
         self.last_plan_time: datetime = datetime.min
+
+        # Index of the route waypoint the boat is steering at, mirroring
+        # route_follower's own target_index. Replanning needs it to tell the leg
+        # being sailed from the ones already behind the boat.
+        self.route_index: int = 0
 
         # LOGGING - TIMER
         self._last_missing_wind_log_time: datetime = datetime.now()
@@ -200,11 +232,13 @@ class GraphRoutePlanner(Node):
             dist_threshold=self.get_parameter("dist_threshold").value,
             off_course_threshold=self.get_parameter("off_course_threshold").value,
             min_time_between_replanning=self.get_parameter("min_time_between_replanning").value,
+            no_go_replan_margin=self.get_parameter("no_go_replan_margin").value,
             margin=self.get_parameter("margin").value,
             grid_spacing=self.get_parameter("grid_spacing").value,
             merge_threshold=self.get_parameter("merge_threshold").value,
             min_leg_distance=self.get_parameter("min_leg_distance").value,
             max_leg_distance=self.get_parameter("max_leg_distance").value,
+            segment_cost=self.get_parameter("segment_cost").value,
             time_between_missing_values_logs=self.get_parameter(
                 "time_between_missing_values_logs"
             ).value,
@@ -249,6 +283,7 @@ class GraphRoutePlanner(Node):
     def _on_boat_info(self, msg: BoatInfo) -> None:
         self.boat = (float(msg.x), float(msg.y))
         self._update_progress()
+        self._advance_route_index()
 
     def _on_mission_change(self, msg: RouteMsg) -> None:
         """Accept a new mission: the via points to round, in order."""
@@ -268,6 +303,7 @@ class GraphRoutePlanner(Node):
         self.via_index = 0
         self.mission_complete = False
         self.planned_route = None          # forces an immediate plan
+        self.route_index = 0
         self.last_plan_time = datetime.min
 
     # ── mission progress ──────────────────────────────────────────────────────
@@ -293,6 +329,22 @@ class GraphRoutePlanner(Node):
         if self.via_index >= len(self.mission):
             self.mission_complete = True
             self.get_logger().info("All via points rounded; mission complete.")
+
+    def _advance_route_index(self) -> None:
+        """Advance past route waypoints the boat has reached.
+
+        Uses route_follower's threshold so both agree on which leg is being
+        sailed. The index only moves forward: a boat blown back past a waypoint
+        is off course, which is a reason to replan rather than to rewind.
+        """
+        route, boat = self.planned_route, self.boat
+        if route is None or boat is None:
+            return
+
+        while (self.route_index < len(route) - 1
+               and Point(boat).distance(Point(route[self.route_index]))
+               < self.config.dist_threshold):
+            self.route_index += 1
 
     # ── planning ──────────────────────────────────────────────────────────────
 
@@ -329,20 +381,57 @@ class GraphRoutePlanner(Node):
     def _replan_reason(self) -> str | None:
         """Why the current route should be replanned, or None to keep it.
 
-        Mirrors the triggers the original planner used: the boat has strayed too
-        far from the route, or the wind has shifted enough that the route can no
-        longer be sailed as planned.
+        Three triggers, and the order matters — the cheapest and most specific
+        first:
+
+        1. The boat can no longer sail at the waypoint it is steering at. This
+           is the one that catches leeway. The route's own waypoints never move,
+           so checking only those can never notice the boat sliding downwind;
+           the bearing that goes bad is the live one, from the boat to its
+           target. It degrades fastest just as the waypoint is nearly reached,
+           because a fixed sideways offset subtends a larger angle the closer
+           the boat gets.
+
+           It fires only once the bearing is `no_go_replan_margin` degrees past
+           the tack limit. Upwind legs are laid at exactly that limit, so the
+           live bearing rides the threshold for the whole beat; without the
+           margin every wobble replans, and each replan restarts the follower's
+           maneuver, so the boat thrashes instead of sailing.
+        2. The boat has strayed too far from the leg it should be on. Measured
+           against the *remaining* route only. Measuring against the whole
+           polyline silently forgives drift on a course that doubles back near
+           itself — this mission ends where it starts, so the last leg would be
+           masked by the first.
+        3. The wind has shifted enough that a leg still ahead cannot be sailed.
+           Legs already behind the boat are irrelevant.
         """
         route, boat = self.planned_route, self.boat
         if route is None or boat is None or len(route) < 2:
             return None
 
-        drift = LineString(route).distance(Point(boat))
-        if drift > self.config.off_course_threshold:
-            return f"off course by {drift:.1f} m"
-
         model = self._sailing_model()
-        for u, v in zip(route, route[1:]):
+        index = min(self.route_index, len(route) - 1)
+
+        target = route[index]
+        replan_below = self.config.min_tack_angle - self.config.no_go_replan_margin
+        if Point(boat).distance(Point(target)) >= self.config.dist_threshold:
+            angle = math.degrees(model.angle_off_wind(boat, target))
+            if angle < replan_below:
+                # One decimal: at .0f a bearing of 44.6 prints as "45 deg, past
+                # the 45 deg limit", which reads like a contradiction in the log.
+                return (f"drifted into the no-go zone: waypoint {index} now bears "
+                        f"{angle:.1f}° off the wind, past the {replan_below:.0f}° replan "
+                        f"limit ({self.config.min_tack_angle:.0f}° tack limit less "
+                        f"{self.config.no_go_replan_margin:.0f}° margin)")
+
+        # The leg being sailed starts at the waypoint before the target.
+        remaining = route[max(index - 1, 0):]
+        if len(remaining) >= 2:
+            drift = LineString(remaining).distance(Point(boat))
+            if drift > self.config.off_course_threshold:
+                return f"off course by {drift:.1f} m"
+
+        for u, v in zip(remaining, remaining[1:]):
             if not model.heading_is_sailable(u, v):
                 return "wind shift made a leg unsailable"
 
@@ -361,21 +450,24 @@ class GraphRoutePlanner(Node):
             return
 
         model = self._sailing_model()
-        route = self._plan_through(points, model)
+        planned = self._plan_through(points, model)
         self.last_plan_time = datetime.now()
 
-        if route is None:
+        if planned is None:
             return
 
+        route, is_soft = planned
         self.planned_route = route
-        self._publish_route(route)
+        self.route_index = 0
+        self._publish_route(route, is_soft)
         self.get_logger().info(
             f"Published route ({reason}): {len(points) - 1} via point(s) ahead expanded to "
             f"{len(route)} waypoints, wind from {self.wind_direction:.0f}°, "
             f"tack limit {self.config.min_tack_angle:.0f}°"
         )
 
-    def _plan_through(self, points: list[Position], model: SailingModel) -> list[Position] | None:
+    def _plan_through(self, points: list[Position],
+                      model: SailingModel) -> tuple[list[Position], list[bool]] | None:
         """Plan the water between each consecutive pair of points.
 
         Args:
@@ -383,14 +475,18 @@ class GraphRoutePlanner(Node):
             model: The boat's sailing model for the current wind.
 
         Returns:
-            The concatenated route, or None if any leg could not be planned.
+            ``(route, is_soft)`` of equal length, or None if any leg could not be
+            planned. A waypoint is soft when the search invented it to get
+            somewhere — a tacking corner — and hard when it is a mission via
+            point that must actually be rounded. The follower needs the
+            difference: it may cut the corners, but not the course.
         """
-        config = self.config.to_planner_config()
         route: list[Position] = []
+        is_soft: list[bool] = []
 
         for index, (start, goal) in enumerate(zip(points, points[1:])):
             try:
-                leg = plan_route(self.map.water, start, goal, model=model, config=config)
+                leg = self.planner.plan(start, goal, model)
             except NoWaterError as err:
                 self.get_logger().error(f"Leg {index} ({start} -> {goal}) cannot be planned: {err}")
                 return None
@@ -409,14 +505,22 @@ class GraphRoutePlanner(Node):
                 f"{leg.duration:.1f} time units"
             )
             # Drop the leg's first point: it is the previous leg's last.
-            route.extend(leg.waypoints if not route else leg.waypoints[1:])
+            added = leg.waypoints if not route else leg.waypoints[1:]
+            route.extend(added)
+            # Everything the search produced is soft, except this leg's goal,
+            # which is the via point the leg was planned to reach. The boat's own
+            # starting position stays soft: it is where the route begins, not
+            # somewhere it has to go.
+            is_soft.extend([True] * len(added))
+            if added:
+                is_soft[-1] = False
 
-        return route
+        return route, is_soft
 
-    def _publish_route(self, waypoints: list[Position]) -> None:
+    def _publish_route(self, waypoints: list[Position], is_soft: list[bool]) -> None:
         route_msg = RouteMsg()
-        for east, north in waypoints:
-            route_msg.waypoints.append(LocationMsg(east=east, north=north))
+        for (east, north), soft in zip(waypoints, is_soft):
+            route_msg.waypoints.append(LocationMsg(east=east, north=north, is_soft=soft))
         self._publisher_target_route.publish(route_msg)
 
 

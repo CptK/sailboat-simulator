@@ -44,12 +44,17 @@ class SimulationNode(Node):
         self.declare_parameter('video_fps', 30)
         self.declare_parameter('video_width', 1280)
         self.declare_parameter('video_height', 720)
+        # KML map whose land is drawn on the water. Empty means no obstacles,
+        # which is what launch.py wants — only the graph planner has a map.
+        self.declare_parameter('map_path', '')
 
         self.render_mode = self.get_parameter('render_mode').value
         self.video_output = self.get_parameter('video_output').value
         self.video_fps = self.get_parameter('video_fps').value
         self.video_width = self.get_parameter('video_width').value
         self.video_height = self.get_parameter('video_height').value
+        self.map_path = self.get_parameter('map_path').value
+        self.obstacles = self._load_obstacles()
 
         self.sim = SailboatSimulation(wind_speed=6.0)
 
@@ -80,6 +85,47 @@ class SimulationNode(Node):
 
         # Timer at 60 Hz (suitable for rendering later)
         self.timer = self.create_timer(1.0 / 60.0, self.timer_callback)
+
+    def _load_obstacles(self) -> list:
+        """Land polygons from the configured map, for drawing on the water.
+
+        Reads the same KML the graph planner plans on, so what is rendered is
+        exactly what the planner refuses to cross. A land feature has its own
+        immediate children subtracted, matching map_loader.build_water: a lake
+        on an island is water, and must not be painted over as land.
+
+        Returns:
+            Shapely Polygons in local (east, north) metres. Empty if no map is
+            configured, or if the map could not be read — a missing map costs
+            the picture, not the simulation, so it warns rather than raising.
+        """
+        if not self.map_path:
+            return []
+
+        try:
+            from shapely.ops import unary_union
+
+            from graph_route_planner.map_loader import immediate_children, load_kml
+
+            sail_map = load_kml(self.map_path)
+            land = []
+            for feature in sail_map.features:
+                if feature.is_water:
+                    continue
+                kids = [c.polygon for c in immediate_children(sail_map.features, feature)]
+                land.append(feature.polygon.difference(unary_union(kids)) if kids
+                            else feature.polygon)
+        except Exception as err:
+            self.get_logger().warn(
+                f"Could not load obstacles from '{self.map_path}': {err}. "
+                f"The simulation runs without them."
+            )
+            return []
+
+        self.get_logger().info(
+            f"Loaded {len(land)} obstacle(s) from '{sail_map.name}' for rendering"
+        )
+        return land
 
     def _init_rendering(self, clear_frames: bool = True):
         """Initialize rendering based on render_mode parameter.
@@ -286,7 +332,8 @@ class SimulationNode(Node):
             buoys=buoys,
             include_course_line=True,
             wind_direction_deg=msg.wind_direction,
-            wind_speed=msg.wind_speed
+            wind_speed=msg.wind_speed,
+            obstacles=self.obstacles
         )
         self.sim.set_boat_position(msg.boat_east, msg.boat_north)
         # Reinitialize rendering with the new model, but keep recording

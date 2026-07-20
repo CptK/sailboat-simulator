@@ -3,13 +3,21 @@
 <Document>
 	<name>Open Water</name>
 	<!--
-	  A featureless 160 x 160 m square of water, matching the open world the
-	  MuJoCo simulation uses. It exists so the graph planner has something to plan
-	  over in a scenario that has no land: the route is then shaped purely by the
-	  wind, tacking upwind and sailing straight otherwise.
+	  A featureless 240 x 240 m square of water.
+
+	  It exists so the graph planner has something to plan over in a scenario
+	  that has no land: the route is then shaped purely by the wind, tacking
+	  upwind and sailing straight otherwise.
 
 	  The square is symmetric about its own centre, and map_loader projects about
 	  the bounding-box centre, so map metres equal simulation metres one-for-one.
+
+	  Size is a planner-side choice, not a physical one. The MuJoCo water plane
+	  in simulation/resource/sailboat.xml is 400 x 400 m and has contype=0, so
+	  nothing stops the boat at any edge — this square only bounds where the
+	  planner is willing to route. 240 m is where route quality stops improving
+	  for the standard mission; past it the search costs more and returns the
+	  same route, because planning time grows with the fourth power of the side.
 	-->
 	<Placemark>
 		<name>Open Water</name>
@@ -17,11 +25,11 @@
 			<outerBoundaryIs>
 				<LinearRing>
 					<coordinates>
-						8.650297995289982,49.876954748273256,0
-						8.652524004710017,49.876954748273256,0
-						8.652524004710017,49.87839325172674,0
-						8.650297995289982,49.87839325172674,0
-						8.650297995289982,49.876954748273256,0
+						8.649741493,49.876595122,0
+						8.653080507,49.876595122,0
+						8.653080507,49.878752878,0
+						8.649741493,49.878752878,0
+						8.649741493,49.876595122,0
 					</coordinates>
 				</LinearRing>
 			</outerBoundaryIs>

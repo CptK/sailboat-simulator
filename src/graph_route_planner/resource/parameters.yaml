@@ -34,6 +34,18 @@ graph_route_planner_node:
     # cannot thrash the planner.
     min_time_between_replanning: 5.0
 
+    # How far inside the no-go zone the bearing from the boat to the waypoint it
+    # is steering at must fall before the route is replanned, in degrees.
+    #
+    # This is hysteresis, not a safety margin, and it is not optional. The polar
+    # steps from 0 to 5 knots at min_tack_angle, so upwind VMG peaks exactly
+    # there and the planner lays every tack at precisely that angle — right on
+    # the trigger. At 0 the boat therefore replans on a fraction of a degree of
+    # leeway or steering wobble, several times a minute while beating, and each
+    # replan restarts the follower's maneuver. 5 degrees keeps the genuine
+    # "cannot lay the mark" cases and drops the noise.
+    no_go_replan_margin: 5.0
+
     # SEARCH
     # Clearance kept from the shoreline and from every island (in meters).
     margin: 2.0
@@ -49,6 +61,23 @@ graph_route_planner_node:
     # Raising it suppresses fiddly hops, but it filters edges, so a high value
     # can disconnect the graph and leave no route at all.
     min_leg_distance: 0.0
+
+    # A fixed time charge added to every leg of the route, biasing the search
+    # toward fewer, longer legs.
+    #
+    # Sailing time alone prices an 8 m repositioning hop at 8 m of sailing and
+    # nothing else, so the planner will take one to gain a fraction of a percent
+    # — arriving at a mark via a stub and a sharp turn. Every leg boundary is a
+    # turn, and a turn is where the boat stops making progress while it settles.
+    # This is that missing cost.
+    #
+    # It shapes the search only and never appears in the reported duration, and
+    # it cannot make an unsailable heading sailable — a beat still tacks however
+    # high it is set. On the standard course the route reaches its minimum leg
+    # count at 0.5 and does not change again up to 16, so the exact value is not
+    # delicate; 1.0 sits well inside that plateau. 0 restores pure time-optimal
+    # routing.
+    segment_cost: 1.0
 
     # Longest leg the planner will consider (in meters).
     # 0 derives it from the map, which is the only value that never truncates a

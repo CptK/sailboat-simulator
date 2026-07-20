@@ -7,6 +7,10 @@
   <maintainer email="marcus.kornmann@sailingteam.tu-darmstadt.de">Marcus Kornmann</maintainer>
   <license>Apache-2.0</license>
 
+  <!-- Only for reading the KML map, so the rendered land matches the land the
+       planner routes around. The simulation runs fine without a map set. -->
+  <exec_depend>graph_route_planner</exec_depend>
+
   <export>
     <build_type>ament_python</build_type>
   </export>

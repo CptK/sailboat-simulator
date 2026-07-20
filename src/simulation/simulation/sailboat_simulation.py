@@ -64,6 +64,7 @@ class SailboatSimulation:
         wind_direction_deg=45.0,
         wind_speed=6.0,
         include_course_line=False,
+        obstacles: list = [],
     ):
         """Initialize the sailboat simulation.
 
@@ -78,11 +79,13 @@ class SailboatSimulation:
                                 Direction wind comes FROM. 0 = North, 90 = East.
             wind_speed: Initial wind speed in m/s [0, 25].
             include_course_line: If True, adds a course line mocap body.
+            obstacles: Shapely Polygons of land to draw on the water, in local
+                (east, north) metres. Visual only; they carry no collision.
         """
         # Resolve path - if just a filename, look in resource folder
         if not Path(model_path).is_absolute():
             model_path = get_resource_path(model_path)
-        modified_xml = build_env(model_path, buoys, include_course_line)
+        modified_xml = build_env(model_path, buoys, include_course_line, obstacles)
         self.model = mujoco.MjModel.from_xml_string(modified_xml)
         self.data = mujoco.MjData(self.model)
 
