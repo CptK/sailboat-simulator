@@ -1,9 +1,10 @@
 graph_route_planner_node:
   ros__parameters:
     # MAP
-    # KML map to plan on. Leave empty to use the map bundled in this package's
-    # assets/ directory. Polygons are classified by nesting depth: a lake is
-    # water, an island in it is land, a lake on that island is water again.
+    # Map to plan on: a name from maps/catalog.yaml (e.g. landgraben, kornaten),
+    # a KML file in maps/, or a path to any KML. Leave empty for the default
+    # (Test.kml). Named maps carry their crop and scale, so the simulation
+    # and the planner always see the same geometry.
     map_path: ""
 
     # BOAT

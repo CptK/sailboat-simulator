@@ -72,6 +72,7 @@ class SailboatSimulation:
         wind_speed=6.0,
         include_course_line=False,
         obstacles: list = [],
+        world_half_size: float | None = None,
     ):
         """Initialize the sailboat simulation.
 
@@ -86,13 +87,18 @@ class SailboatSimulation:
                                 Direction wind comes FROM. 0 = North, 90 = East.
             wind_speed: Initial wind speed in m/s [0, 25].
             include_course_line: If True, adds a course line mocap body.
-            obstacles: Shapely Polygons of land to draw on the water, in local
-                (east, north) metres. Visual only; they carry no collision.
+            obstacles: Shapely Polygons of land, in local (east, north) metres.
+                Drawn as banks on the water; the boat collides with them.
+            world_half_size: Half the side of the simulated world (the water
+                plane) in metres; None keeps the default 200. Use
+                build_env.world_half_size_for(map.water) for a map, and
+                build_env.land_from_water for its obstacles.
         """
         # Resolve path - if just a filename, look in resource folder
         if not Path(model_path).is_absolute():
             model_path = get_resource_path(model_path)
-        modified_xml = build_env(model_path, buoys, include_course_line, obstacles)
+        modified_xml = build_env(model_path, buoys, include_course_line, obstacles,
+                                 world_half_size)
         self.model = mujoco.MjModel.from_xml_string(modified_xml)
         self.data = mujoco.MjData(self.model)
 

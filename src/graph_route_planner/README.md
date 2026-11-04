@@ -64,16 +64,19 @@ ros2 topic pub --once /planning/mission boat_msgs/msg/Route \
   "{waypoints: [{east: -10.0, north: -10.0}, {east: 60.0, north: -10.0}, {east: 60.0, north: 60.0}]}"
 ```
 
-`assets/` holds the maps: `Landgraben.kml` (a real pond with an island),
-`Test.kml` (the same pond plus a lake *on* the island) and `OpenWater.kml` (a
-featureless square matching the simulation's world, so routes there are shaped
-purely by the wind).
+Maps live in the repository's `maps/` directory (the `sail_maps` package), shared
+with the simulation. `maps/catalog.yaml` names them — `landgraben` (a real pond
+with an island), `test` (the same pond plus a lake *on* the island), `openwater`
+(a square of open water) and two OpenStreetMap archipelagos from Croatia,
+`kornaten` and `zirje_kaprije`, cropped and scaled down 1:50 so a small boat can
+sail between the islands. The `map_path` parameter takes a catalog name, a file
+in `maps/`, or any path; `python scripts/render_maps.py` draws them.
 
 Two development tools ship with it, neither of which the node itself needs:
 
 ```bash
 ros2 run graph_route_planner graph_route_planner_viewer   # click start + goal, drag the wind
-ros2 run graph_route_planner graph_route_planner_cli assets/Landgraben.kml --wind 90
+ros2 run graph_route_planner graph_route_planner_cli maps/Landgraben.kml --wind 90
 pytest                                                    # 110 tests, no ROS required
 ```
 

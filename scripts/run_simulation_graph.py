@@ -48,12 +48,17 @@ import threading
 #              (0 = North, 90 = East), and m/s [0, 25]
 #   waypoints: mission via points (east, north) in meters, rounded in order;
 #              the planner fills in the water between them
-#   map:       KML file in graph_route_planner/assets (or an absolute path)
+#   map:       a map name from maps/catalog.yaml (see scripts/render_maps.py
+#              to look at one), a KML file in maps/, or a path
 #   grid_spacing: planner tacking-grid spacing in meters (finer for small maps)
+#   max_leg_distance: optional; the planner's longest leg in meters. Large maps
+#              need a limit (100-150) to build the planner's graph in seconds.
+#   planning_delay: optional; seconds to let the planner build its graph and
+#              plan before checking for a route (default PLANNING_DELAY)
 SCENARIOS = {
     # Open water with a square course area in the middle.
     "open_water": {
-        "map": "OpenWater.kml",
+        "map": "openwater",
         "grid_spacing": 10.0,
         "boat": (-10.0, 60.0),
         "buoys": [
@@ -77,7 +82,7 @@ SCENARIOS = {
     # where there is room to tack. Buoys form a small course area in the open
     # southern basin (with a yellow gate) plus one blue mark in the north-west.
     "landgraben": {
-        "map": "Landgraben.kml",
+        "map": "landgraben",
         "grid_spacing": 6.0,
         "boat": (0.0, -38.0),
         "buoys": [
@@ -95,6 +100,57 @@ SCENARIOS = {
             (5.0, 38.0),     # across the north
             (-32.0, 10.0),   # down the west channel
             (0.0, -35.0),    # back to the start
+        ],
+    },
+    # Zirje and Kaprije, Croatia, from OpenStreetMap at 1:50 (about 380 x 340 m).
+    # A lap from the open sea in the west: along the north shore of Zirje,
+    # north through the gap between the two middle islands, across under the
+    # mainland coast, and back out west between the islands. Wind is the
+    # summer maestral from the north-west. Buoys mark the via points.
+    "zirje_kaprije": {
+        "map": "zirje_kaprije",
+        "grid_spacing": 15.0,
+        "max_leg_distance": 120.0,
+        "planning_delay": 15.0,
+        "boat": (-170.0, -10.0),
+        "buoys": [
+            {"east": -62.0, "north": -37.0},                                 # Orange
+            {"east": 72.0, "north": -12.0, "r": 1.0, "g": 0.0, "b": 0.0},    # Red
+            {"east": 45.0, "north": 80.0, "r": 0.0, "g": 0.8, "b": 0.0},     # Green
+            {"east": -68.0, "north": 62.0, "r": 1.0, "g": 1.0, "b": 0.0},    # Yellow
+        ],
+        "wind": (315.0, 4.0),
+        "waypoints": [
+            (-62.0, -37.0),   # along the north shore of Zirje
+            (72.0, -12.0),    # into the gap between the middle islands
+            (45.0, 80.0),     # under the mainland coast
+            (-68.0, 62.0),    # back west between the islands
+            (-132.0, 8.0),    # out into the open sea
+        ],
+    },
+    # The Kornati archipelago, Croatia, from OpenStreetMap at 1:50 (about
+    # 770 x 660 m). From the open sea in the south-west, through the outer
+    # island chain into the channel along Kornat, down the channel, around the
+    # south-east tip of Kornat and up its inner side. About 630 m of sailing,
+    # roughly ten minutes. Wind is the maestral from the north-west.
+    "kornaten": {
+        "map": "kornaten",
+        "grid_spacing": 20.0,
+        "max_leg_distance": 120.0,
+        "planning_delay": 25.0,
+        "boat": (-200.0, -100.0),
+        "buoys": [
+            {"east": -50.0, "north": 68.0},                                  # Orange
+            {"east": 88.0, "north": -13.0, "r": 1.0, "g": 0.0, "b": 0.0},    # Red
+            {"east": 235.0, "north": -22.0, "r": 0.0, "g": 0.8, "b": 0.0},   # Green
+            {"east": 265.0, "north": 30.0, "r": 1.0, "g": 1.0, "b": 0.0},    # Yellow
+        ],
+        "wind": (315.0, 4.0),
+        "waypoints": [
+            (-50.0, 68.0),    # through the outer chain into the Kornat channel
+            (88.0, -13.0),    # down the channel
+            (235.0, -22.0),   # round the south-east tip of Kornat
+            (265.0, 30.0),    # up the inner side
         ],
     },
 }
@@ -206,7 +262,8 @@ def main():
     print("\n[1/5] Launching ROS system (with graph_route_planner)...")
     ros_process = subprocess.Popen(
         ["ros2", "launch", "launch/launch_graph.py",
-         f"map:={scenario['map']}", f"grid_spacing:={scenario['grid_spacing']}"],
+         f"map:={scenario['map']}", f"grid_spacing:={scenario['grid_spacing']}",
+         f"max_leg_distance:={scenario.get('max_leg_distance', 0.0)}"],
         start_new_session=True,
     )
 
@@ -242,18 +299,19 @@ def main():
     )
 
     # 5. Report what the planner made of it.
-    print(f"\n[5/5] Waiting {PLANNING_DELAY}s for the planner to expand the mission...")
-    time.sleep(PLANNING_DELAY)
+    planning_delay = scenario.get("planning_delay", PLANNING_DELAY)
+    print(f"\n[5/5] Waiting {planning_delay}s for the planner to expand the mission...")
+    time.sleep(planning_delay)
     try:
         # The route is latched (RELIABLE + TRANSIENT_LOCAL), and it was published
         # seconds ago, so this late-joining reader must match BOTH of those to be
         # handed the held sample. A default reader receives it only by luck, and
         # setting durability alone (without reliability) matches neither.
         result = subprocess.run(
-            ["ros2", "topic", "echo", "--once", "--timeout", "10",
+            ["ros2", "topic", "echo", "--once", "--timeout", "20",
              "--qos-reliability", "reliable", "--qos-durability", "transient_local",
              "/planning/target_route", "boat_msgs/msg/Route"],
-            capture_output=True, text=True, timeout=15,
+            capture_output=True, text=True, timeout=25,
         )
         planned = result.stdout.count("east:")
         if planned:

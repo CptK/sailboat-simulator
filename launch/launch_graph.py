@@ -15,11 +15,15 @@ role, and graph_route_planner replaces its planning role. The simulation and
 controller are the same as in launch.py.
 
 Launch arguments:
-    map           KML map, as a file name in graph_route_planner/assets
-                  (e.g. Landgraben.kml) or an absolute path. Default OpenWater.kml.
+    map           A map name from maps/catalog.yaml (e.g. landgraben, kornaten),
+                  a KML file in maps/, or a path. Default openwater.
     grid_spacing  The planner's tacking-grid spacing in metres. Default 10.0,
                   sized for the 240 m open-water map; small maps like the
-                  Landgraben pond want something finer (around 6).
+                  Landgraben pond want something finer (around 6), large
+                  archipelagos coarser (around 20).
+    max_leg_distance  Longest leg the planner considers, in metres; 0 (the
+                  default) derives it from the map. Large maps need a limit
+                  (100-150) to build their visibility graph in seconds.
 """
 
 from launch import LaunchDescription
@@ -40,21 +44,21 @@ def generate_launch_description():
     # the frame, the boat will visibly sail over an obstacle instead of it
     # going unnoticed.
     #
-    # A bare file name is looked up in the planner's assets; an absolute path
-    # wins over the prefix (os.path.join semantics), so either form works.
+    # Both nodes resolve the name the same way (map_loader.load_map), crop and
+    # scale included, so it is passed through as given.
     map_arg = DeclareLaunchArgument(
-        'map', default_value='OpenWater.kml',
-        description='KML map: a file in graph_route_planner/assets, or an absolute path',
+        'map', default_value='openwater',
+        description='Map: a name from maps/catalog.yaml, a KML file in maps/, or a path',
     )
     grid_spacing_arg = DeclareLaunchArgument(
         'grid_spacing', default_value='10.0',
         description="Planner tacking-grid spacing in metres",
     )
-    map_path = PathJoinSubstitution([
-        FindPackageShare('graph_route_planner'),
-        'assets',
-        LaunchConfiguration('map'),
-    ])
+    max_leg_arg = DeclareLaunchArgument(
+        'max_leg_distance', default_value='0.0',
+        description="Planner's longest leg in metres; 0 derives it from the map",
+    )
+    map_path = LaunchConfiguration('map')
 
     simulation_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -105,6 +109,8 @@ def generate_launch_description():
                 # large maps want a coarser grid than the pond.
                 'grid_spacing': ParameterValue(
                     LaunchConfiguration('grid_spacing'), value_type=float),
+                'max_leg_distance': ParameterValue(
+                    LaunchConfiguration('max_leg_distance'), value_type=float),
             },
         ],
     )
@@ -112,6 +118,7 @@ def generate_launch_description():
     return LaunchDescription([
         map_arg,
         grid_spacing_arg,
+        max_leg_arg,
         simulation_launch,
         controller_launch,
         route_follower_launch,

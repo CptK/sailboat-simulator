@@ -1,7 +1,11 @@
 """
 Interactive route planner.
 
-    python -m graph_route_planner.viewer [map.kml]
+    python -m graph_route_planner.viewer [map]
+
+`map` is a name from maps/catalog.yaml (e.g. landgraben, kornaten), a KML file
+in maps/, or any path; named maps come with their crop and scale, exactly as
+the simulation and the planner node use them.
 
 Click the water to drop a start point, click again for a goal, and the route
 is planned between them. The header bar turns the wind (0-360°), retunes the
@@ -24,13 +28,13 @@ from graph_route_planner import DEFAULT_MAP
 from shapely.geometry.base import BaseGeometry
 
 from graph_route_planner.geometry import bbox_diagonal
-from graph_route_planner.map_loader import load_kml
+from graph_route_planner.map_loader import load_map
 from graph_route_planner.planner import (
     Graph,
     NoWaterError,
+    CachedPlanner,
     PlannerConfig,
     Position,
-    plan_route,
 )
 from graph_route_planner.plotting import (
     LAND_COLOR,
@@ -49,6 +53,34 @@ HEADER_BG = "#eceff1"
 #: Tuning suited to a pond-sized map, rather than the planner's own defaults
 #: which assume the larger synthetic basin.
 VIEWER_DEFAULTS = PlannerConfig(margin=2.0, grid_spacing=6.0, merge_threshold=1.5)
+
+#: Maps wider than this (metres) get a coarser grid and a leg limit by default,
+#: or their first plan takes minutes: the visibility graph grows with the
+#: square of its node count.
+LARGE_MAP_SPAN = 300.0
+#: Default leg limit on large maps, in metres.
+LARGE_MAP_MAX_LEG = 120.0
+#: Default tacking grid on large maps: this many cells across the map.
+LARGE_MAP_GRID_CELLS = 40
+
+
+def search_defaults(sail_map, grid: float | None,
+                    max_leg: float | None) -> tuple[float, float | None]:
+    """Grid spacing and leg limit to use when the command line leaves them out.
+
+    Small maps keep the viewer's defaults (6 m grid, no leg limit). Larger ones
+    get a grid of about LARGE_MAP_GRID_CELLS cells across and a leg limit, the
+    same trade the archipelago scenarios make.
+    """
+    x0, y0, x1, y1 = sail_map.bounds
+    span = max(x1 - x0, y1 - y0)
+    large = span > LARGE_MAP_SPAN
+    if grid is None:
+        grid = (max(VIEWER_DEFAULTS.grid_spacing, round(span / LARGE_MAP_GRID_CELLS))
+                if large else VIEWER_DEFAULTS.grid_spacing)
+    if max_leg is None and large:
+        max_leg = LARGE_MAP_MAX_LEG
+    return grid, max_leg
 
 
 class RoutePlannerViewer:
@@ -77,6 +109,11 @@ class RoutePlannerViewer:
         self.path: list[Position] = []
         self.graph: Graph = {}
         self.navigable: BaseGeometry | None = None
+        # The visibility graph only depends on the map and the search settings,
+        # so it is kept between clicks and wind changes and rebuilt only when a
+        # slider other than the wind moves. On a large map that is the
+        # difference between seconds and minutes per click.
+        self._planner: CachedPlanner | None = None
         self.status = "Click on water to set the start point."
         self.stats = ""
 
@@ -139,7 +176,8 @@ class RoutePlannerViewer:
         self.s_margin = Slider(self.fig.add_axes((0.275, top_y, w, row_h)),
                                "margin", 0.5, 10.0, valinit=self.config.margin, valstep=0.5)
         self.s_grid = Slider(self.fig.add_axes((0.495, top_y, w, row_h)),
-                             "grid", 2.0, 20.0, valinit=self.config.grid_spacing, valstep=0.5)
+                             "grid", 2.0, max(20.0, 2 * self.config.grid_spacing),
+                             valinit=self.config.grid_spacing, valstep=0.5)
 
         self.s_merge = Slider(self.fig.add_axes((0.055, bot_y, w, row_h)),
                               "merge", 0.0, 5.0, valinit=self.config.merge_threshold, valstep=0.25)
@@ -282,8 +320,7 @@ class RoutePlannerViewer:
 
         t0 = time.time()
         try:
-            route = plan_route(self.map.water, start, goal,
-                               model=self.model, config=config)
+            route = self._plan_route(start, goal, config)
         except NoWaterError as e:
             self._clear_route()
             self.status = f"No route: {e}"
@@ -303,6 +340,12 @@ class RoutePlannerViewer:
             self.status = "No route found — try a smaller margin."
             self.stats = f"{len(route.graph)} nodes · planned in {elapsed:.2f}s"
         self.draw()
+
+    def _plan_route(self, start: Position, goal: Position, config: PlannerConfig):
+        """Plan with a cached graph, rebuilt only when the search settings change."""
+        if self._planner is None or self._planner.config != config:
+            self._planner = CachedPlanner(self.map.water, config)
+        return self._planner.plan(start, goal, self.model)
 
     # ── drawing ───────────────────────────────────────────────────────────────
 
@@ -349,32 +392,37 @@ class RoutePlannerViewer:
 def main():
     """Entry point: ``python -m graph_route_planner.viewer [map.kml]``."""
     ap = argparse.ArgumentParser(description="Interactive sailing route planner")
-    ap.add_argument("kml", nargs="?", default=str(DEFAULT_MAP), help="KML map to load")
+    ap.add_argument("map", nargs="?", default=str(DEFAULT_MAP),
+                    help="map name from maps/catalog.yaml, KML file in maps/, or path")
     ap.add_argument("--wind", type=float, default=0.0,
                     help="bearing the wind blows FROM, degrees (0 = north)")
     ap.add_argument("--margin", type=float, default=VIEWER_DEFAULTS.margin)
-    ap.add_argument("--grid", type=float, default=VIEWER_DEFAULTS.grid_spacing)
+    ap.add_argument("--grid", type=float, default=None,
+                    help="tacking-grid spacing, metres (default: scaled to the map)")
     ap.add_argument("--merge", type=float, default=VIEWER_DEFAULTS.merge_threshold)
     ap.add_argument("--min-leg", type=float, default=VIEWER_DEFAULTS.min_leg_distance,
                     help="shortest leg to consider, metres (0 disables)")
     ap.add_argument("--max-leg", type=float, default=None,
-                    help="longest leg to consider, metres (default: the map's span)")
+                    help="longest leg to consider, metres (default: the map's span, "
+                         f"or {LARGE_MAP_MAX_LEG:g} on maps over {LARGE_MAP_SPAN:g} m)")
     ap.add_argument("-v", "--verbose", action="store_true", help="log planner internals")
     args = ap.parse_args()
 
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.WARNING,
                         format="%(message)s")
 
-    sail_map = load_kml(args.kml)
+    sail_map = load_map(args.map)
     model = SailingModel.from_bearing(args.wind)
+    grid, max_leg = search_defaults(sail_map, args.grid, args.max_leg)
     print(f"Loaded '{sail_map.name}': {len(sail_map.features)} features, "
-          f"{len(sail_map.components)} navigable body(ies)")
+          f"{len(sail_map.components)} navigable body(ies); grid {grid:g} m, "
+          f"max leg {'map span' if max_leg is None else f'{max_leg:g} m'}")
     print("Click water to set start, click again for goal.")
 
-    config = PlannerConfig(margin=args.margin, grid_spacing=args.grid,
+    config = PlannerConfig(margin=args.margin, grid_spacing=grid,
                            merge_threshold=args.merge,
                            min_leg_distance=args.min_leg,
-                           max_leg_distance=args.max_leg)
+                           max_leg_distance=max_leg)
     RoutePlannerViewer(sail_map, model=model, config=config)
     plt.show()
 

@@ -24,8 +24,17 @@ def navigable_area(water, margin: float):
     longer need inflating separately. Eroding can split a body in two (a
     narrow channel closes up) or erase it entirely (a pond narrower than the
     margin) — both are correct answers, not errors.
+
+    Corners are mitred, not rounded. A rounded offset replaces every corner
+    of the coastline with an arc of ~8 vertices, and every vertex becomes a
+    graph node — on a real coastline that is 5x the map's own vertices and
+    a visibility graph too large to build. A mitred corner adds no vertices
+    and lies further from land than the arc would, never closer, so the
+    clearance is still at least `margin`. Corners sharper than the mitre
+    limit are bevelled at twice the margin, which keeps the same guarantee
+    without long spikes into narrow inlets.
     """
-    return water.buffer(-margin)
+    return water.buffer(-margin, join_style="mitre", mitre_limit=2.0)
 
 
 def extract_nodes(start, goal, navigable, grid_spacing: float = 15.0) -> list:

@@ -44,7 +44,7 @@ from boat_msgs.msg import Wind
 # Planning backend — plain Python, no ROS.
 from graph_route_planner import DEFAULT_MAP
 from graph_route_planner.graph import navigable_area
-from graph_route_planner.map_loader import SailMap, load_kml
+from graph_route_planner.map_loader import SailMap, load_map
 from graph_route_planner.planner import (
     CachedPlanner,
     NoWaterError,
@@ -73,7 +73,8 @@ class Config(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     # Map
-    map_path: str = Field("", description="KML map to plan on; empty uses the bundled default")
+    map_path: str = Field("", description="Map to plan on: a name from maps/catalog.yaml, a KML "
+                                          "file in maps/, or a path; empty uses the default map")
 
     # Boat
     min_tack_angle: float = Field(
@@ -288,8 +289,9 @@ class GraphRoutePlanner(Node):
         )
 
     def _load_map(self) -> SailMap:
-        path = self.config.map_path or str(DEFAULT_MAP)
-        sail_map = load_kml(path)
+        # A catalog name (maps/catalog.yaml), a file in maps/, or a path. Loaded
+        # exactly as the simulation loads it, crop and scale included.
+        sail_map = load_map(self.config.map_path or str(DEFAULT_MAP))
         bodies = len(sail_map.components)
         self.get_logger().info(
             f"Loaded map '{sail_map.name}': {len(sail_map.features)} features, "

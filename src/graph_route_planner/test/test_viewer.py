@@ -228,10 +228,8 @@ def test_replan_is_not_reentrant(viewer, monkeypatch):
     slider release while planning is still running. Without a guard that
     recurses without bound and the window locks up for good.
     """
-    import graph_route_planner.viewer as viewer_mod
-
     depth = {"now": 0, "max": 0}
-    real_plan = viewer_mod.plan_route
+    real_plan = viewer._plan_route
 
     def reentrant_plan(*args, **kwargs):
         depth["now"] += 1
@@ -245,9 +243,43 @@ def test_replan_is_not_reentrant(viewer, monkeypatch):
         finally:
             depth["now"] -= 1
 
-    monkeypatch.setattr(viewer_mod, "plan_route", reentrant_plan)
+    monkeypatch.setattr(viewer, "_plan_route", reentrant_plan)
 
     viewer.start, viewer.goal = (-30.0, -1.1), (22.0, 35.0)
     viewer.replan()
 
     assert depth["max"] == 1
+
+
+def test_graph_is_reused_between_clicks(viewer):
+    """Same search settings: the second route must not rebuild the graph."""
+    viewer.start, viewer.goal = (-30.0, -1.1), (22.0, 35.0)
+    viewer.replan()
+    planner = viewer._planner
+    builds = planner.builds
+    viewer.start, viewer.goal = (22.0, 35.0), (-30.0, -1.1)
+    viewer.replan()
+    assert viewer._planner is planner and planner.builds == builds
+    assert viewer.path
+
+
+def test_changing_a_search_slider_rebuilds_the_graph(viewer):
+    viewer.start, viewer.goal = (-30.0, -1.1), (22.0, 35.0)
+    viewer.replan()
+    planner = viewer._planner
+    viewer.s_margin.set_val(3.0)
+    viewer.replan()
+    assert viewer._planner is not planner
+
+
+def test_large_maps_get_a_coarser_search_by_default():
+    from graph_route_planner.map_loader import load_map
+    from graph_route_planner.viewer import LARGE_MAP_MAX_LEG, search_defaults
+
+    small = load_map("landgraben")
+    assert search_defaults(small, None, None) == (6.0, None)
+    large = load_map("kornaten")
+    grid, max_leg = search_defaults(large, None, None)
+    assert grid >= 15 and max_leg == LARGE_MAP_MAX_LEG
+    assert search_defaults(large, 8.0, 200.0) == (8.0, 200.0)   # explicit wins
+

@@ -15,8 +15,8 @@ setup(
         # Include launch files
         (os.path.join('share', package_name, 'launch'), glob('launch/*.py')),
         (os.path.join('share', package_name, 'resource'), glob('resource/parameters.yaml')),
-        # Bundled KML maps, resolved at runtime by graph_route_planner._assets_dir
-        (os.path.join('share', package_name, 'assets'), glob('assets/*.kml')),
+        # Maps are not bundled here: they live in the sail_maps package (the
+        # repository's maps/ directory), see graph_route_planner._maps_dir.
     ],
     install_requires=['setuptools'],
     zip_safe=True,

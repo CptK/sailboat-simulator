@@ -56,8 +56,9 @@ class SimulationNode(Node):
         self.declare_parameter('video_height', 720)
         # Picture-in-picture of the boat's own camera, like a video call self-view
         self.declare_parameter('onboard_inset_scale', 0.22)
-        # KML map whose land is drawn on the water. Empty means no obstacles,
-        # which is what launch.py wants — only the graph planner has a map.
+        # Map whose land is drawn on the water and collided with: a name from
+        # maps/catalog.yaml, a KML file in maps/, or a path. Empty means open
+        # water, which is what launch.py wants — only the graph planner has a map.
         self.declare_parameter('map_path', '')
 
         self.render_mode = self.get_parameter('render_mode').value
@@ -105,41 +106,39 @@ class SimulationNode(Node):
     def _load_obstacles(self) -> list:
         """Land polygons from the configured map, for drawing on the water.
 
-        Reads the same KML the graph planner plans on, so what is rendered is
-        exactly what the planner refuses to cross. Land is everything in the
-        simulated world that is not navigable water: the shore around a pond,
-        islands, and anything else the map marks as land. Using the map's own
-        water (map_loader.build_water) keeps nested features right — a lake on
-        an island is water, and must not be painted over as land.
+        Loads the map exactly as the graph planner does (by catalog name, file
+        name in maps/, or path — with the catalog's crop and scale), so what is
+        rendered is exactly what the planner refuses to cross. Land is
+        everything in the simulated world that is not navigable water, and the
+        world is sized to hold the map (self.world_half_size).
 
         Returns:
             Shapely Polygons in local (east, north) metres. Empty if no map is
             configured, or if the map could not be read — a missing map costs
             the picture, not the simulation, so it warns rather than raising.
         """
+        self.world_half_size = None
         if not self.map_path:
             return []
 
         try:
-            from shapely.geometry import box
+            from graph_route_planner.map_loader import load_map
+            from simulation.build_env import land_from_water, world_half_size_for
 
-            from graph_route_planner.geometry import polygons_of
-            from graph_route_planner.map_loader import load_kml
-            from simulation.build_env import WORLD_HALF_SIZE
-
-            sail_map = load_kml(self.map_path)
-            world = box(-WORLD_HALF_SIZE, -WORLD_HALF_SIZE,
-                        WORLD_HALF_SIZE, WORLD_HALF_SIZE)
-            land = polygons_of(world.difference(sail_map.water))
+            sail_map = load_map(self.map_path)
+            self.world_half_size = world_half_size_for(sail_map.water)
+            land = land_from_water(sail_map.water, self.world_half_size)
         except Exception as err:
             self.get_logger().warn(
-                f"Could not load obstacles from '{self.map_path}': {err}. "
-                f"The simulation runs without them."
+                f"Could not load map '{self.map_path}': {err}. "
+                f"The simulation runs without it."
             )
+            self.world_half_size = None
             return []
 
         self.get_logger().info(
-            f"Loaded {len(land)} land polygon(s) from '{sail_map.name}' for rendering"
+            f"Loaded map '{sail_map.name}': {len(land)} land polygon(s), "
+            f"world {2 * self.world_half_size:.0f} m across"
         )
         return land
 
@@ -375,7 +374,8 @@ class SimulationNode(Node):
             include_course_line=True,
             wind_direction_deg=msg.wind_direction,
             wind_speed=msg.wind_speed,
-            obstacles=self.obstacles
+            obstacles=self.obstacles,
+            world_half_size=self.world_half_size,
         )
         self.sim.set_boat_position(msg.boat_east, msg.boat_north)
         # Reinitialize rendering with the new model, but keep recording

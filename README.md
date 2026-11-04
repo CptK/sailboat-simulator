@@ -11,6 +11,7 @@ A complete ROS2-based autonomous sailboat navigation system with physics-based s
   - [Prerequisites](#prerequisites)
   - [Installation](#installation)
   - [Running the Full System](#running-the-full-system)
+  - [Maps](#maps)
   - [Interactive Simulation](#interactive-simulation)
   - [Launch Individual Nodes](#launch-individual-nodes)
 - [Docker Deployment](#docker-deployment)
@@ -141,6 +142,25 @@ This script will:
 - Wind direction and speed
 - Route waypoints
 - Video output settings
+
+### Maps
+
+All maps live in [`maps/`](maps) (installed as the `sail_maps` package), named in
+[`maps/catalog.yaml`](maps/catalog.yaml): `landgraben`, `openwater`, `test`, and
+two archipelagos from Croatia, `kornaten` and `zirje_kaprije`. Those come from
+OpenStreetMap coastline exports (overpass-turbo, `natural=coastline`), cropped and
+scaled down 1:50 so the boat sails between real islands. The simulation and the
+graph planner load a map by its catalog name, so both always see the same
+geometry; the boat collides with land.
+
+```bash
+python scripts/run_simulation_graph.py --map zirje_kaprije   # sail a course on a map
+python scripts/render_maps.py --overview --scenarios          # look at the maps and courses
+```
+
+To add a map, put the KML in `maps/`, add a catalog entry (for OSM exports: a
+`crop`, and a `scale`), check it with `render_maps.py <name> --overview`, and add
+a course to `SCENARIOS` in `scripts/run_simulation_graph.py`.
 
 ### Interactive Simulation
 

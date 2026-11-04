@@ -8,6 +8,7 @@
   <license>TODO: License declaration</license>
 
   <exec_depend>rclpy</exec_depend>
+  <exec_depend>sail_maps</exec_depend>
   <exec_depend>boat_msgs</exec_depend>
   <exec_depend>std_msgs</exec_depend>
 

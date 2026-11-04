@@ -1,3 +1,4 @@
+import math
 import xml.etree.ElementTree as ET
 from datetime import datetime
 
@@ -79,9 +80,53 @@ def get_course_line_mocap(length: float = 20.0) -> str:
     '''
 
 
-#: Half the side length of the water plane in sailboat.xml (size="200 200 1").
-#: Land from a map is drawn everywhere inside this square that is not water.
+#: Half the side length of the water plane in sailboat.xml (size="200 200 1"),
+#: and the smallest world built. Larger maps get a larger world (see
+#: world_half_size_for); land is drawn everywhere in it that is not water.
 WORLD_HALF_SIZE = 200.0
+
+#: Land kept around a map beyond its furthest edge, in metres, so the world
+#: does not visibly end at the map's border.
+WORLD_MAP_MARGIN = 50.0
+
+#: Size of one repeat of the water texture, in metres. Kept constant
+#: when the world grows, so the water looks the same — the tiles are what make
+#: speed and turning visible in the onboard camera.
+WATER_TILE_M = 8.0
+
+
+def world_half_size_for(water) -> float:
+    """Half the side of a square world centred on the origin that holds `water`.
+
+    Args:
+        water: The map's navigable water (any shapely geometry).
+    """
+    if water.is_empty:
+        return WORLD_HALF_SIZE
+    x0, y0, x1, y1 = water.bounds
+    reach = max(abs(x0), abs(y0), abs(x1), abs(y1))
+    return max(WORLD_HALF_SIZE, math.ceil(reach + WORLD_MAP_MARGIN))
+
+
+def land_from_water(water, half_size: float) -> list:
+    """Land polygons for a map: everything in the world that is not water.
+
+    That is the shore around a pond, islands, the area beyond a cropped
+    coastline map — everything the boat must not sail into.
+
+    Args:
+        water: The map's navigable water.
+        half_size: Half the world's side, from world_half_size_for.
+
+    Returns:
+        A list of shapely Polygons.
+    """
+    from shapely.geometry import box
+
+    land = box(-half_size, -half_size, half_size, half_size).difference(water)
+    if land.is_empty:
+        return []
+    return list(land.geoms) if land.geom_type == "MultiPolygon" else [land]
 
 #: Land is a low grassy bank rising from the water plane (at z = -0.1). It is
 #: tall enough that the onboard camera, about 1.35 m above the water, sees the
@@ -93,23 +138,23 @@ OBSTACLE_RGBA = "0.35 0.55 0.25 1"
 
 
 def _triangulate(polygon):
-    """Triangulate a polygon's face, respecting its holes.
+    """Triangulate a polygon's face, respecting its edges and holes.
 
-    Shapely's `triangulate` is an unconstrained Delaunay over the vertices, so
-    it tiles the convex hull and happily covers concave bays and holes too.
-    Keeping only the triangles whose representative point lies inside the
-    polygon discards exactly those, which is why holes need no special case.
+    A constrained Delaunay triangulation: every polygon edge is an edge of the
+    result, so no triangle reaches past a coastline into the water. (An
+    unconstrained Delaunay filtered by triangle centroid looks similar, but on
+    real coastlines some triangles straddle the shore — invisible rocks in open
+    water once they are turned into collision prisms.)
 
     Args:
-        polygon: A shapely Polygon, already oriented.
+        polygon: A shapely Polygon.
 
     Returns:
-        A list of shapely Polygon triangles covering the face.
+        A list of shapely Polygon triangles covering the face exactly.
     """
-    from shapely.ops import triangulate
+    import shapely
 
-    return [t for t in triangulate(polygon)
-            if polygon.contains(t.representative_point())]
+    return list(shapely.constrained_delaunay_triangles(polygon).geoms)
 
 
 def get_obstacle_mesh(index: int, polygon, bottom: float = OBSTACLE_BOTTOM,
@@ -227,7 +272,8 @@ def get_land_collision(index: int, polygon) -> tuple[list[str], list[str]]:
     return assets, geoms
 
 
-def build_env(path: str, buoys: list[tuple[float, float] | tuple[float, float, float, float, float]], include_course_line: bool = False, obstacles: list = []):
+def build_env(path: str, buoys: list[tuple[float, float] | tuple[float, float, float, float, float]], include_course_line: bool = False, obstacles: list = [],
+              world_half_size: float | None = None):
     """
     Modify the sailboat environment XML to set buoy locations and course line.
 
@@ -240,6 +286,8 @@ def build_env(path: str, buoys: list[tuple[float, float] | tuple[float, float, f
         obstacles: Shapely Polygons of land, in local (east, north) metres, drawn
             as low banks on the water. The boat collides with them (see
             get_land_collision), so it cannot sail through land.
+        world_half_size: Half the side of the water plane, in metres. None keeps
+            the model's own (WORLD_HALF_SIZE); larger maps need more.
     """
     tree = ET.parse(path)
     root = tree.getroot()
@@ -247,6 +295,16 @@ def build_env(path: str, buoys: list[tuple[float, float] | tuple[float, float, f
     worldbody = root.find("worldbody")
     if worldbody is None:
         raise ValueError("No worldbody found in XML.")
+
+    if world_half_size is not None:
+        water = worldbody.find("geom[@name='water']")
+        if water is None:
+            raise ValueError("No water plane found in XML.")
+        water.set("size", f"{world_half_size} {world_half_size} 1")
+        material = root.find("asset/material[@name='water_mat']")
+        if material is not None:
+            repeat = 2 * world_half_size / WATER_TILE_M   # 50 for the default 400 m
+            material.set("texrepeat", f"{repeat:g} {repeat:g}")
 
     # Add buoys
     for buoy in buoys:
