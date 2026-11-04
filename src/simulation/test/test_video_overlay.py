@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from simulation.video_overlay import inset_size, picture_in_picture
+from simulation.video_overlay import draw_label, inset_size, picture_in_picture
 
 
 def test_inset_size_keeps_4_3_aspect():
@@ -26,3 +26,13 @@ def test_inset_is_drawn_bottom_right_with_border():
 def test_inset_too_large_raises():
     with pytest.raises(ValueError):
         picture_in_picture(np.zeros((50, 50, 3), np.uint8), np.zeros((60, 10, 3), np.uint8))
+
+
+def test_label_is_drawn_top_right_only():
+    frame = np.zeros((720, 1280, 3), np.uint8)
+    out = draw_label(frame, "Collision detected", margin=10)
+    changed = np.any(out != 0, axis=2)
+    rows, cols = np.nonzero(changed)
+    assert rows.min() >= 10 and cols.max() <= 1280 - 10  # inside the margin
+    assert rows.max() < 360 and cols.min() > 640          # in the top-right quarter
+    assert (frame == 0).all()                             # input not modified

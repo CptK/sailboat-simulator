@@ -79,11 +79,17 @@ def get_course_line_mocap(length: float = 20.0) -> str:
     '''
 
 
-#: Obstacles sit just above the water plane (which is at z = -0.1) so they read
-#: as flat marks on the surface from a top-down camera rather than as walls.
+#: Half the side length of the water plane in sailboat.xml (size="200 200 1").
+#: Land from a map is drawn everywhere inside this square that is not water.
+WORLD_HALF_SIZE = 200.0
+
+#: Land is a low grassy bank rising from the water plane (at z = -0.1). It is
+#: tall enough that the onboard camera, about 1.35 m above the water, sees the
+#: shoreline as a band along the horizon rather than a hairline, and low enough
+#: not to hide buoys behind it from the chase camera.
 OBSTACLE_BOTTOM = -0.1
-OBSTACLE_TOP = 0.1
-OBSTACLE_RGBA = "0.15 0.15 0.17 1"
+OBSTACLE_TOP = 0.5
+OBSTACLE_RGBA = "0.35 0.55 0.25 1"
 
 
 def _triangulate(polygon):
@@ -162,11 +168,63 @@ def get_obstacle_mesh(index: int, polygon, bottom: float = OBSTACLE_BOTTOM,
     face_attr = " ".join(f"{a} {b} {c}" for a, b, c in faces)
 
     asset = f'<mesh name="obstacle_mesh_{index}" vertex="{vertex_attr}" face="{face_attr}"/>'
-    # Visual only: contype/conaffinity 0 keeps the boat's physics exactly as it
-    # was. The planner is what keeps the boat out, not a collision here.
+    # Visual only: contype/conaffinity 0. Collision is handled by separate
+    # convex prisms (get_land_collision), since MuJoCo would collide this
+    # non-convex mesh as its convex hull.
     geom = (f'<geom name="obstacle_{index}" type="mesh" mesh="obstacle_mesh_{index}" '
             f'rgba="{OBSTACLE_RGBA}" contype="0" conaffinity="0"/>')
     return asset, geom
+
+
+#: Land collision. MuJoCo collides a mesh as its convex hull, so the visible
+#: land mesh cannot be used: the hull of "the world minus a pond" covers the
+#: pond too. Instead every triangle of the land gets its own invisible convex
+#: prism. They are far taller than the visible bank so the boat's collider,
+#: which sits at water level, always meets their side walls and never their top
+#: face — a vertical contact normal acts on none of the boat's planar degrees of
+#: freedom (x, y, yaw) and would let it slide straight through.
+COLLISION_BOTTOM = -5.0
+COLLISION_TOP = 5.0
+
+#: contype/conaffinity bit for boat-vs-land contacts. The boat collider has it as
+#: contype, land as conaffinity, and nothing else uses it, so the boat collides
+#: with land only (buoys keep MuJoCo's default bit 1 and are not touched).
+LAND_COLLISION_BIT = 2
+
+#: Geom group for invisible colliders. Group 3 is hidden in MuJoCo's viewer and
+#: in every renderer here by default.
+COLLIDER_GEOM_GROUP = 3
+
+#: Triangles smaller than this (m²) are skipped: they cannot stop a boat, and a
+#: degenerate sliver can make MuJoCo's convex-hull computation fail.
+MIN_COLLISION_TRIANGLE_AREA = 1e-3
+
+
+def get_land_collision(index: int, polygon) -> tuple[list[str], list[str]]:
+    """Invisible convex collision prisms covering a land polygon.
+
+    Args:
+        index: Index of the polygon, used to name the meshes and geoms.
+        polygon: A shapely Polygon of land in local (east, north) metres.
+
+    Returns:
+        `(asset_xmls, geom_xmls)` — one mesh asset and one geom per triangle.
+    """
+    assets, geoms = [], []
+    for k, tri in enumerate(_triangulate(polygon)):
+        if tri.area < MIN_COLLISION_TRIANGLE_AREA:
+            continue
+        corners = list(tri.exterior.coords)[:3]
+        # Vertices only: MuJoCo builds the (convex) hull itself.
+        vertex_attr = " ".join(f"{x:.4f} {y:.4f} {z}"
+                               for z in (COLLISION_BOTTOM, COLLISION_TOP)
+                               for x, y in corners)
+        name = f"land_collision_{index}_{k}"
+        assets.append(f'<mesh name="{name}_mesh" vertex="{vertex_attr}"/>')
+        geoms.append(f'<geom name="{name}" type="mesh" mesh="{name}_mesh" '
+                     f'contype="0" conaffinity="{LAND_COLLISION_BIT}" '
+                     f'group="{COLLIDER_GEOM_GROUP}" rgba="0 0 0 0"/>')
+    return assets, geoms
 
 
 def build_env(path: str, buoys: list[tuple[float, float] | tuple[float, float, float, float, float]], include_course_line: bool = False, obstacles: list = []):
@@ -180,9 +238,8 @@ def build_env(path: str, buoys: list[tuple[float, float] | tuple[float, float, f
             - (x, y, r, g, b) tuple for custom RGB color
         include_course_line: If True, adds a mocap body for the course line.
         obstacles: Shapely Polygons of land, in local (east, north) metres, drawn
-            as thin dark slabs on the water. These are visual only — they carry
-            no collision, so they show what the planner routes around without
-            changing the physics.
+            as low banks on the water. The boat collides with them (see
+            get_land_collision), so it cannot sail through land.
     """
     tree = ET.parse(path)
     root = tree.getroot()
@@ -224,5 +281,10 @@ def build_env(path: str, buoys: list[tuple[float, float] | tuple[float, float, f
             asset_xml, geom_xml = get_obstacle_mesh(index, polygon)
             asset.append(ET.fromstring(asset_xml))
             worldbody.append(ET.fromstring(geom_xml))
+            col_assets, col_geoms = get_land_collision(index, polygon)
+            for col_asset in col_assets:
+                asset.append(ET.fromstring(col_asset))
+            for col_geom in col_geoms:
+                worldbody.append(ET.fromstring(col_geom))
 
     return ET.tostring(root, encoding="unicode")

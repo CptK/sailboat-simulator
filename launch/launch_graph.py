@@ -13,11 +13,20 @@ those two jobs across two nodes:
 So route_planner is not used here at all — route_follower replaces its steering
 role, and graph_route_planner replaces its planning role. The simulation and
 controller are the same as in launch.py.
+
+Launch arguments:
+    map           KML map, as a file name in graph_route_planner/assets
+                  (e.g. Landgraben.kml) or an absolute path. Default OpenWater.kml.
+    grid_spacing  The planner's tacking-grid spacing in metres. Default 10.0,
+                  sized for the 240 m open-water map; small maps like the
+                  Landgraben pond want something finer (around 6).
 """
 
 from launch import LaunchDescription
-from launch.substitutions import PathJoinSubstitution
+from launch.actions import DeclareLaunchArgument
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 from launch_ros.substitutions import FindPackageShare
 
 
@@ -30,10 +39,21 @@ def generate_launch_description():
     # both is what keeps the picture honest — if the two ever disagree about
     # the frame, the boat will visibly sail over an obstacle instead of it
     # going unnoticed.
-    open_water_map = PathJoinSubstitution([
+    #
+    # A bare file name is looked up in the planner's assets; an absolute path
+    # wins over the prefix (os.path.join semantics), so either form works.
+    map_arg = DeclareLaunchArgument(
+        'map', default_value='OpenWater.kml',
+        description='KML map: a file in graph_route_planner/assets, or an absolute path',
+    )
+    grid_spacing_arg = DeclareLaunchArgument(
+        'grid_spacing', default_value='10.0',
+        description="Planner tacking-grid spacing in metres",
+    )
+    map_path = PathJoinSubstitution([
         FindPackageShare('graph_route_planner'),
         'assets',
-        'OpenWater.kml',
+        LaunchConfiguration('map'),
     ])
 
     simulation_launch = IncludeLaunchDescription(
@@ -44,7 +64,7 @@ def generate_launch_description():
                 'simulation.launch.py',
             ])
         ),
-        launch_arguments={'map_path': open_water_map}.items(),
+        launch_arguments={'map_path': map_path}.items(),
     )
     controller_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -79,16 +99,19 @@ def generate_launch_description():
         parameters=[
             graph_parameters_file,
             {
-                # The simulation's world is open water, not the bundled pond.
-                'map_path': open_water_map,
-                # Coarser than the pond default: this map is 160x160 m, and the
-                # grid is laid over the whole of it, so cost grows with the area.
-                'grid_spacing': 10.0,
+                # The same map the simulation draws.
+                'map_path': map_path,
+                # Planning cost grows with the square of map size / spacing, so
+                # large maps want a coarser grid than the pond.
+                'grid_spacing': ParameterValue(
+                    LaunchConfiguration('grid_spacing'), value_type=float),
             },
         ],
     )
 
     return LaunchDescription([
+        map_arg,
+        grid_spacing_arg,
         simulation_launch,
         controller_launch,
         route_follower_launch,

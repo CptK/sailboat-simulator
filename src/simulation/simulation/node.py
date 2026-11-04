@@ -1,3 +1,5 @@
+import signal
+
 import rclpy
 from rclpy.node import Node
 import mujoco
@@ -6,7 +8,10 @@ import time
 import numpy as np
 
 from simulation.sailboat_simulation import SailboatSimulation
-from simulation.video_overlay import inset_size, picture_in_picture
+from simulation.video_overlay import draw_label, inset_size, picture_in_picture
+
+#: Shown in the top-right corner of the video and viewer while the boat touches land.
+COLLISION_TEXT = "Collision detected"
 from boat_msgs.msg import Wind, RudderAngle, SailAngle, Heading, BoatInfo, EnvironmentCreation, Route
 from std_msgs.msg import Bool
 
@@ -27,6 +32,7 @@ class SimulationNode(Node):
         /sense/boat_info (BoatInfo): Full boat state (degrees, m, m/s)
         /sense/wind (Wind): Current wind conditions in degrees [0, 360)
         /sense/heading (Heading): Current heading in degrees [0, 360)
+        /sense/collision (Bool): True while the boat is touching land
 
     Parameters:
         render_mode (str): "none", "viewer" (live window), or "video" (record to file)
@@ -82,6 +88,9 @@ class SimulationNode(Node):
         self.heading_publisher = self.create_publisher(Heading, '/sense/heading', 1)
         self.wind_publisher = self.create_publisher(Wind, '/sense/wind', 1)
         self.boat_info_publisher = self.create_publisher(BoatInfo, '/sense/boat_info', 1)
+        # True while the boat is touching land (it cannot sail through it)
+        self.collision_publisher = self.create_publisher(Bool, '/sense/collision', 1)
+        self.was_colliding = False
 
         # Track time for physics stepping
         self.last_time = self.get_clock().now()
@@ -97,9 +106,11 @@ class SimulationNode(Node):
         """Land polygons from the configured map, for drawing on the water.
 
         Reads the same KML the graph planner plans on, so what is rendered is
-        exactly what the planner refuses to cross. A land feature has its own
-        immediate children subtracted, matching map_loader.build_water: a lake
-        on an island is water, and must not be painted over as land.
+        exactly what the planner refuses to cross. Land is everything in the
+        simulated world that is not navigable water: the shore around a pond,
+        islands, and anything else the map marks as land. Using the map's own
+        water (map_loader.build_water) keeps nested features right — a lake on
+        an island is water, and must not be painted over as land.
 
         Returns:
             Shapely Polygons in local (east, north) metres. Empty if no map is
@@ -110,18 +121,16 @@ class SimulationNode(Node):
             return []
 
         try:
-            from shapely.ops import unary_union
+            from shapely.geometry import box
 
-            from graph_route_planner.map_loader import immediate_children, load_kml
+            from graph_route_planner.geometry import polygons_of
+            from graph_route_planner.map_loader import load_kml
+            from simulation.build_env import WORLD_HALF_SIZE
 
             sail_map = load_kml(self.map_path)
-            land = []
-            for feature in sail_map.features:
-                if feature.is_water:
-                    continue
-                kids = [c.polygon for c in immediate_children(sail_map.features, feature)]
-                land.append(feature.polygon.difference(unary_union(kids)) if kids
-                            else feature.polygon)
+            world = box(-WORLD_HALF_SIZE, -WORLD_HALF_SIZE,
+                        WORLD_HALF_SIZE, WORLD_HALF_SIZE)
+            land = polygons_of(world.difference(sail_map.water))
         except Exception as err:
             self.get_logger().warn(
                 f"Could not load obstacles from '{self.map_path}': {err}. "
@@ -130,7 +139,7 @@ class SimulationNode(Node):
             return []
 
         self.get_logger().info(
-            f"Loaded {len(land)} obstacle(s) from '{sail_map.name}' for rendering"
+            f"Loaded {len(land)} land polygon(s) from '{sail_map.name}' for rendering"
         )
         return land
 
@@ -214,6 +223,12 @@ class SimulationNode(Node):
             # Camera follows boat
             self.viewer.cam.lookat[0] = boat_x
             self.viewer.cam.lookat[1] = boat_y
+            if self.sim.in_collision():
+                self.viewer.set_texts((mujoco.mjtFontScale.mjFONTSCALE_150,
+                                       mujoco.mjtGridPos.mjGRID_TOPRIGHT,
+                                       COLLISION_TEXT, ""))
+            else:
+                self.viewer.clear_texts()
             self.viewer.sync()
 
         elif self.render_mode == 'video':
@@ -234,6 +249,8 @@ class SimulationNode(Node):
                 inset_w, inset_h = inset_size(self.video_width, self.onboard_inset_scale)
                 inset = self.sim.render_onboard(inset_w, inset_h)
                 frame = picture_in_picture(frame, inset)
+            if self.sim.in_collision():
+                frame = draw_label(frame, COLLISION_TEXT)
             # Write frame directly to disk instead of buffering in memory
             try:
                 self.video_writer.append_data(frame)
@@ -281,6 +298,19 @@ class SimulationNode(Node):
             rudder_angle=status['rudder'],
             sail_angle=status['sail_angle'],
         ))
+        self._report_collision(status)
+
+    def _report_collision(self, status: dict):
+        """Publish the collision state, and log when the boat runs aground or frees itself."""
+        colliding = bool(status['collision'])
+        self.collision_publisher.publish(Bool(data=colliding))
+        if colliding != self.was_colliding:
+            where = f"({status['x']:.1f}, {status['y']:.1f})"
+            if colliding:
+                self.get_logger().warn(f"Collision: boat ran aground at {where}")
+            else:
+                self.get_logger().info(f"Boat is clear of land again at {where}")
+        self.was_colliding = colliding
 
     def _on_rudder_control(self, msg: RudderAngle):
         # msg.angle in degrees [-45, 45]
@@ -376,8 +406,14 @@ def main(args=None):
     except KeyboardInterrupt:
         pass
 
+    # Shutdown is triggered by SIGINT, and it often arrives twice: once from
+    # whoever stopped the run (e.g. the run scripts signal the whole process
+    # group) and once forwarded by ros2 launch. A second one landing while the
+    # video is being finalized would abort the write and leave an unplayable
+    # file, so ignore further interrupts while cleaning up.
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
     node.destroy_node()
-    rclpy.shutdown()
+    rclpy.try_shutdown()  # the interrupt may already have shut the context down
 
 
 if __name__ == '__main__':

@@ -37,6 +37,10 @@ from simulation.build_env import build_env, MAX_ROUTE_SEGMENTS, OVERLAY_GEOM_GRO
 #: Name of the camera mounted on the boat (see sailboat.xml).
 ONBOARD_CAMERA = "bow_cam"
 
+#: Camera clip planes in metres, independent of how large the map makes the model.
+CLIP_NEAR_M = 0.4
+CLIP_FAR_M = 2000.0
+
 
 def get_resource_path(resource_name: str) -> str:
     """Get path to a resource file, works both in development and installed package."""
@@ -141,11 +145,34 @@ class SailboatSimulation:
         self.act_rudder = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_ACTUATOR, "rudder_ctrl")
         self.act_sheet = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_ACTUATOR, "sheet_ctrl")
 
+        # Collider used for running aground; it only ever touches land.
+        self.geom_boat_collider = mujoco.mj_name2id(
+            self.model, mujoco.mjtObj.mjOBJ_GEOM, "boat_collider")
+
+        # MuJoCo sets the camera clip planes relative to the model's extent, so a
+        # large map (a land mesh hundreds of metres across) would push the near
+        # plane metres out, clipping the water in front of the boat and the bow,
+        # and the far plane tens of kilometres away, ruining depth precision.
+        # Pin them in metres to what the bare model has always used.
+        extent = self.model.stat.extent
+        self.model.vis.map.znear = CLIP_NEAR_M / extent
+        self.model.vis.map.zfar = CLIP_FAR_M / extent
+
         # Onboard camera rendering: created lazily, one renderer per resolution.
         # The scene option hides the debug overlays from the boat's own view.
         self._onboard_renderers: dict[tuple[int, int], mujoco.Renderer] = {}
         self._onboard_scene_option = mujoco.MjvOption()
         self._onboard_scene_option.geomgroup[OVERLAY_GEOM_GROUP] = 0
+
+    def in_collision(self) -> bool:
+        """Whether the boat is currently touching land.
+
+        Based on the contacts of the last physics step, so it is True exactly
+        while land is pushing the boat back.
+        """
+        contacts = self.data.contact[:self.data.ncon]
+        return bool(np.any((contacts.geom1 == self.geom_boat_collider) |
+                           (contacts.geom2 == self.geom_boat_collider)))
 
     def render_onboard(self, width: int = 320, height: int = 240) -> np.ndarray:
         """Render the view from the camera mounted on the boat.
@@ -441,6 +468,7 @@ class SailboatSimulation:
             'wind_dir': wind_dir_deg,
             'wind_speed': self.wind.speed,
             'wind_knots': self.wind.speed * 1.944,
+            'collision': self.in_collision(),
         }
     
     def set_boat_position(self, east: float, north: float):

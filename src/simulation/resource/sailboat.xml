@@ -34,6 +34,17 @@
       <!-- Yaw rotation -->
       <joint name="boat_yaw" type="hinge" axis="0 0 1" damping="2"/>
 
+      <!-- Invisible collider for running aground: a capsule around the hull's
+           footprint (about 2.7 m x 0.6 m) at water level. It lives on this body
+           because this body carries the boat's x, y and yaw freedom, so contact
+           forces stop, slide and turn the boat. It collides with land only
+           (contype bit 2, see build_env.LAND_COLLISION_BIT) and is massless, so
+           the boat's inertia is unchanged. Low friction lets the boat scrape
+           along a shore rather than stick to it. -->
+      <geom name="boat_collider" type="capsule" fromto="-1.15 0 0.2 0.95 0 0.2" size="0.3"
+            mass="0" contype="2" conaffinity="0" friction="0.3 0.005 0.0001"
+            group="3" rgba="0 0 0 0"/>
+
       <!-- Small vertical float for wave effect -->
       <body name="boat_hull" pos="0 0 0.35">
         <joint name="boat_heave" type="slide" axis="0 0 1" damping="100" stiffness="5000" springref="0"/>

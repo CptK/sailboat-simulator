@@ -51,3 +51,41 @@ def picture_in_picture(
     out[top:bottom, left:right] = border_color
     out[top + border:bottom - border, left + border:right - border] = inset
     return out
+
+
+def draw_label(
+    frame: np.ndarray,
+    text: str,
+    font_size: int = 28,
+    margin: int = 16,
+    padding: int = 10,
+    text_color: tuple[int, int, int] = (255, 255, 255),
+    box_color: tuple[int, int, int] = (200, 30, 30),
+) -> np.ndarray:
+    """Draw ``text`` on a filled box in the top-right corner of ``frame``.
+
+    Args:
+        frame: RGB image, shape (H, W, 3), uint8.
+        text: The label.
+        font_size: Text height in pixels.
+        margin: Gap in pixels between the box and the frame edges.
+        padding: Gap in pixels between the text and the box edges.
+        text_color: RGB colour of the text.
+        box_color: RGB colour of the box behind it.
+
+    Returns:
+        A new image; ``frame`` is not modified.
+    """
+    from PIL import Image, ImageDraw, ImageFont
+
+    image = Image.fromarray(frame)
+    draw = ImageDraw.Draw(image)
+    font = ImageFont.load_default(size=font_size)
+    left, top, right, bottom = draw.textbbox((0, 0), text, font=font)
+    box_w = right - left + 2 * padding
+    box_h = bottom - top + 2 * padding
+    x0 = frame.shape[1] - margin - box_w
+    y0 = margin
+    draw.rectangle((x0, y0, x0 + box_w, y0 + box_h), fill=box_color)
+    draw.text((x0 + padding - left, y0 + padding - top), text, font=font, fill=text_color)
+    return np.asarray(image)
