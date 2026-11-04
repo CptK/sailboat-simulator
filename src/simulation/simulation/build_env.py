@@ -28,6 +28,11 @@ def get_buoy(x: float, y: float, r: float = 1.0, g: float = 0.5, b: float = 0.0)
     '''
 
 
+#: Geom group for debug overlays (route, course line, wind arrow). MuJoCo's
+#: viewer shows groups 0-2 by default, so overlays stay visible there; the
+#: onboard camera switches this group off so a policy never sees them.
+OVERLAY_GEOM_GROUP = 2
+
 MAX_ROUTE_SEGMENTS = 20  # Maximum number of route segments that can be displayed
 
 
@@ -47,7 +52,7 @@ def get_route_segment_mocap(index: int) -> str:
       <geom name="route_segment_geom_{index}" type="box"
             size="1 0.08 0.015"
             rgba="1 0.5 0 0.7"
-            contype="0" conaffinity="0"/>
+            contype="0" conaffinity="0" group="{OVERLAY_GEOM_GROUP}"/>
     </body>
     '''
 
@@ -69,7 +74,7 @@ def get_course_line_mocap(length: float = 20.0) -> str:
       <geom name="course_line_geom" type="box"
             size="{half_length:.1f} 0.1 0.02"
             rgba="0 1 0 0.5"
-            contype="0" conaffinity="0"/>
+            contype="0" conaffinity="0" group="{OVERLAY_GEOM_GROUP}"/>
     </body>
     '''
 

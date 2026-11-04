@@ -6,6 +6,7 @@ import time
 import numpy as np
 
 from simulation.sailboat_simulation import SailboatSimulation
+from simulation.video_overlay import inset_size, picture_in_picture
 from boat_msgs.msg import Wind, RudderAngle, SailAngle, Heading, BoatInfo, EnvironmentCreation, Route
 from std_msgs.msg import Bool
 
@@ -33,6 +34,9 @@ class SimulationNode(Node):
         video_fps (int): Frames per second for video recording (default: 30)
         video_width (int): Video width in pixels (default: 1280)
         video_height (int): Video height in pixels (default: 720)
+        onboard_inset_scale (float): Width of the onboard-camera inset in the
+            bottom-right corner of the video, as a fraction of the video width
+            (default: 0.22). 0 disables the inset.
     """
 
     def __init__(self):
@@ -44,6 +48,8 @@ class SimulationNode(Node):
         self.declare_parameter('video_fps', 30)
         self.declare_parameter('video_width', 1280)
         self.declare_parameter('video_height', 720)
+        # Picture-in-picture of the boat's own camera, like a video call self-view
+        self.declare_parameter('onboard_inset_scale', 0.22)
         # KML map whose land is drawn on the water. Empty means no obstacles,
         # which is what launch.py wants — only the graph planner has a map.
         self.declare_parameter('map_path', '')
@@ -53,6 +59,7 @@ class SimulationNode(Node):
         self.video_fps = self.get_parameter('video_fps').value
         self.video_width = self.get_parameter('video_width').value
         self.video_height = self.get_parameter('video_height').value
+        self.onboard_inset_scale = float(self.get_parameter('onboard_inset_scale').value)
         self.map_path = self.get_parameter('map_path').value
         self.obstacles = self._load_obstacles()
 
@@ -223,6 +230,10 @@ class SimulationNode(Node):
             # Render using chase_cam (attached to boat, follows automatically)
             self.renderer.update_scene(self.sim.data, self.camera)
             frame = self.renderer.render()
+            if self.onboard_inset_scale > 0:
+                inset_w, inset_h = inset_size(self.video_width, self.onboard_inset_scale)
+                inset = self.sim.render_onboard(inset_w, inset_h)
+                frame = picture_in_picture(frame, inset)
             # Write frame directly to disk instead of buffering in memory
             try:
                 self.video_writer.append_data(frame)
@@ -327,7 +338,8 @@ class SimulationNode(Node):
             (buoy.east, buoy.north, buoy.color.r, buoy.color.g, buoy.color.b)
             for buoy in msg.buoys
         ]
-        # Create a fresh simulation instance
+        # Create a fresh simulation instance (releasing the old one's renderers)
+        self.sim.close()
         self.sim = SailboatSimulation(
             buoys=buoys,
             include_course_line=True,

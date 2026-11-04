@@ -32,7 +32,10 @@ from simulation.sailboat_physics import (
     SailControl,
     compute_total_forces,
 )
-from simulation.build_env import build_env, MAX_ROUTE_SEGMENTS
+from simulation.build_env import build_env, MAX_ROUTE_SEGMENTS, OVERLAY_GEOM_GROUP
+
+#: Name of the camera mounted on the boat (see sailboat.xml).
+ONBOARD_CAMERA = "bow_cam"
 
 
 def get_resource_path(resource_name: str) -> str:
@@ -137,6 +140,42 @@ class SailboatSimulation:
         # Get actuator indices
         self.act_rudder = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_ACTUATOR, "rudder_ctrl")
         self.act_sheet = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_ACTUATOR, "sheet_ctrl")
+
+        # Onboard camera rendering: created lazily, one renderer per resolution.
+        # The scene option hides the debug overlays from the boat's own view.
+        self._onboard_renderers: dict[tuple[int, int], mujoco.Renderer] = {}
+        self._onboard_scene_option = mujoco.MjvOption()
+        self._onboard_scene_option.geomgroup[OVERLAY_GEOM_GROUP] = 0
+
+    def render_onboard(self, width: int = 320, height: int = 240) -> np.ndarray:
+        """Render the view from the camera mounted on the boat.
+
+        This is the observation a policy should see: debug overlays (route,
+        course line, wind arrow) are hidden, everything physical is drawn.
+        Renderers are cached per resolution, so calling this every step is cheap
+        apart from the render itself.
+
+        Args:
+            width: Image width in pixels (at most the model's offwidth, 1920).
+            height: Image height in pixels (at most the model's offheight, 1080).
+
+        Returns:
+            RGB image as a uint8 array of shape (height, width, 3).
+        """
+        key = (width, height)
+        renderer = self._onboard_renderers.get(key)
+        if renderer is None:
+            renderer = mujoco.Renderer(self.model, width=width, height=height)
+            self._onboard_renderers[key] = renderer
+        renderer.update_scene(self.data, camera=ONBOARD_CAMERA,
+                              scene_option=self._onboard_scene_option)
+        return renderer.render()
+
+    def close(self):
+        """Release rendering resources (GL contexts) held by this simulation."""
+        for renderer in self._onboard_renderers.values():
+            renderer.close()
+        self._onboard_renderers.clear()
 
     def get_boat_state(self) -> BoatState:
         """Get current boat state for physics calculations."""

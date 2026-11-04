@@ -81,33 +81,44 @@
         <!-- Center of mass marker (invisible) -->
         <site name="com" pos="0 0 0" size="0.05" rgba="1 0 0 0"/>
 
+        <!-- Onboard camera: what the boat itself sees. Mounted on the front face of
+             the mast about 1 m above the hull origin, looking forward and pitched 6°
+             down so the horizon sits a little above mid-frame and a sliver of the bow
+             shows at the bottom edge as a fixed heading reference. It rolls, pitches
+             and heaves with the hull like a real mounted camera. fovy=70 gives about
+             86° horizontally at 4:3. Used for policy observations, so the debug
+             overlays (geom group 2) are hidden when rendering from it. -->
+        <camera name="bow_cam" pos="-0.05 0 1.0" xyaxes="0 -1 0 0.1045 0 0.9945" fovy="70"/>
+
         <!-- Chase camera: birds-eye view from behind and above -->
         <camera name="chase_cam" pos="-20 0 14" xyaxes="0 -1 0 1 0 1.9" fovy="60"/>
       </body>
     </body>
 
-    <!-- Wind direction indicator - large arrow showing where wind blows TO -->
+    <!-- Wind direction indicator - large arrow showing where wind blows TO.
+         A debug overlay (group 2): visible in the viewer and chase video, hidden
+         from the onboard camera. -->
     <body name="wind_arrow" pos="8 0 4" mocap="true">
       <!-- Arrow shaft - bright cyan -->
       <geom name="arrow_shaft" type="cylinder" size="0.12 1.2" euler="0 90 0"
-            rgba="0.0 0.9 1.0 0.9" contype="0" conaffinity="0"/>
+            rgba="0.0 0.9 1.0 0.9" contype="0" conaffinity="0" group="2"/>
       <!-- Arrowhead - orange/yellow for contrast -->
       <geom name="arrow_head1" type="box" size="0.4 0.08 0.4" pos="1.4 0 0" euler="0 0 45"
-            rgba="1.0 0.6 0.0 0.95" contype="0" conaffinity="0"/>
+            rgba="1.0 0.6 0.0 0.95" contype="0" conaffinity="0" group="2"/>
       <geom name="arrow_head2" type="box" size="0.4 0.08 0.4" pos="1.4 0 0" euler="0 0 -45"
-            rgba="1.0 0.6 0.0 0.95" contype="0" conaffinity="0"/>
+            rgba="1.0 0.6 0.0 0.95" contype="0" conaffinity="0" group="2"/>
       <!-- Arrow tail feathers -->
       <geom name="arrow_tail1" type="box" size="0.25 0.04 0.15" pos="-1.3 0 0.15"
-            rgba="0.0 0.7 0.9 0.8" contype="0" conaffinity="0"/>
+            rgba="0.0 0.7 0.9 0.8" contype="0" conaffinity="0" group="2"/>
       <geom name="arrow_tail2" type="box" size="0.25 0.04 0.15" pos="-1.3 0 -0.15"
-            rgba="0.0 0.7 0.9 0.8" contype="0" conaffinity="0"/>
+            rgba="0.0 0.7 0.9 0.8" contype="0" conaffinity="0" group="2"/>
       <!-- Wind streaks behind arrow -->
       <geom name="streak1" type="cylinder" size="0.03 0.6" euler="0 90 0" pos="-2.2 0.3 0.2"
-            rgba="0.8 0.95 1.0 0.5" contype="0" conaffinity="0"/>
+            rgba="0.8 0.95 1.0 0.5" contype="0" conaffinity="0" group="2"/>
       <geom name="streak2" type="cylinder" size="0.03 0.5" euler="0 90 0" pos="-2.0 -0.25 -0.15"
-            rgba="0.8 0.95 1.0 0.5" contype="0" conaffinity="0"/>
+            rgba="0.8 0.95 1.0 0.5" contype="0" conaffinity="0" group="2"/>
       <geom name="streak3" type="cylinder" size="0.03 0.4" euler="0 90 0" pos="-1.8 0.15 -0.3"
-            rgba="0.8 0.95 1.0 0.5" contype="0" conaffinity="0"/>
+            rgba="0.8 0.95 1.0 0.5" contype="0" conaffinity="0" group="2"/>
     </body>
 
     <!-- Masthead wind vane (windex) - small indicator on top of mast -->
