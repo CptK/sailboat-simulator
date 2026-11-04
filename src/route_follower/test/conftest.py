@@ -51,7 +51,7 @@ def follower(config):
             publish=node.published_route.append
         )
         # Bind the real methods so the object behaves like the node.
-        for name in ("_select_maneuver", "_prospective_target",
+        for name in ("_select_maneuver", "_prospective_target", "_prospective_index",
                      "_skip_reached_soft_waypoints"):
             setattr(node, name,
                     (lambda n=name: lambda *a, **k: getattr(RouteFollower, n)(node, *a, **k))())

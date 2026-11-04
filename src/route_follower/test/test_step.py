@@ -127,3 +127,22 @@ def test_a_maneuver_is_cancelled_when_the_leg_changes(follower):
     node = follower(route=BEAT, target_index=1, boat=wp(80.0, 5.0), maneuver=sentinel)
     RouteFollower._on_target_route(node, RouteMsgStub([(80.0, 5.0), (10.0, 40.0), (60.0, 60.0)]))
     assert node.maneuver is None
+
+
+def test_a_maneuver_survives_the_first_step_after_a_replan(follower):
+    """Regression: the route starts at the boat, so the first step used to
+    "reach" waypoint 0, treat that as a fresh leg and cancel the maneuver.
+
+    A replan every few seconds then restarted the tack before `is_stuck` could
+    ever count enough steps to fall back to a jibe, and a grounded boat sat
+    pinched on the shore indefinitely.
+    """
+    boat = wp(80.0, 5.0)
+    node = follower(route=BEAT, target_index=1, boat=boat, heading=180.0)
+    step(node)
+    maneuver = node.maneuver
+    assert maneuver is not None          # a 125° turn onto TACK1: too far to just steer
+
+    RouteFollower._on_target_route(node, RouteMsgStub([(80.0, 5.0), (90.0, 12.0), (60.0, 60.0)]))
+    step(node)
+    assert node.maneuver is maneuver

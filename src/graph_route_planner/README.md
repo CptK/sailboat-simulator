@@ -113,6 +113,24 @@ without a portage, and that is reported rather than routed around.
 navigable area away from the shoreline and every island at once, so obstacles
 need no separate handling. Clearance is keep-in (`covers`), not keep-out.
 
+**A start inside the margin is routed out, not refused.** A boat can drift
+closer to shore than the margin, and then no leg through the eroded area
+reaches it. Its first leg is planned through the real water instead, and time
+spent inside the margin is charged `1 + shore_penalty` times over, so the route
+gets off the shore first, on a sailable heading, and only then makes for the
+goal. The boat escapes into its *nearest* piece of eroded water, so the margin
+still closes narrow channels. Mission via points inside the margin are moved
+just inside it when the mission arrives, with a warning.
+
+The node replans the boat out on its own: when it is more than
+`margin_replan_depth` inside the margin (leeway on a leg along the margin's
+edge gets it there long before `off_course_threshold` notices), and whenever
+`/sense/collision` reports a grounding since the last plan. A grounded boat
+whose reference point is on land is planned from the nearest water. Given the
+boat's heading, the way out stays on its current tack within `escape_max_turn`
+degrees, since a boat pinned on a lee shore has no speed to tack and can't
+bear away into the land. If no such leg exists, any sailable one is used.
+
 ## Conventions
 
 - Coordinates are `(east, north)` in metres, matching `Location.msg`.

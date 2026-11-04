@@ -46,9 +46,20 @@ graph_route_planner_node:
     # "cannot lay the mark" cases and drops the noise.
     no_go_replan_margin: 5.0
 
+    # How far inside the shore margin the boat may get before it is replanned
+    # out of it (in meters). Must be below `margin`.
+    #
+    # Routes run right along the margin's edge, so leeway on a close-hauled leg
+    # carries the boat into the margin long before off_course_threshold notices
+    # — and with a 2.5 m hull the boat can touch land when only ~0.75 m into a
+    # 2 m margin. This is hysteresis: at 0 every brush with the edge replans,
+    # and each replan restarts the follower's maneuver.
+    # Independently, a grounding reported on /sense/collision always replans.
+    margin_replan_depth: 0.5
+
     # SEARCH
     # Clearance kept from the shoreline and from every island (in meters).
-    margin: 2.0
+    margin: 3.0
 
     # Spacing of the open-water waypoint grid used for tacking (in meters).
     # Smaller is more accurate and much slower: cost grows with the square.
@@ -78,6 +89,29 @@ graph_route_planner_node:
     # delicate; 1.0 sits well inside that plateau. 0 restores pure time-optimal
     # routing.
     segment_cost: 1.0
+
+    # Extra weight on time spent inside the shore margin, for a boat that has
+    # drifted there (or starts there).
+    #
+    # Such a boat cannot be routed through the margin-eroded water at all, so its
+    # first leg is planned through the real water instead, and each second of it
+    # spent inside the margin costs 1 + shore_penalty seconds. At a large value
+    # the planner first gets the boat off the shore as quickly as it can on a
+    # sailable heading — on a lee shore that is a close reach, not straight away
+    # from land — and only then heads for the via point. 0 makes the strip legal
+    # but free, so the route may run along the shore inside the margin.
+    # Like segment_cost it shapes the search only and is not in the duration.
+    shore_penalty: 20.0
+
+    # For a boat inside the shore margin, the largest turn onto the first leg
+    # out of it (in degrees). That leg must also stay on the boat's current tack.
+    #
+    # A boat that close to shore may have no speed — it may be pinned against
+    # the land. Then it cannot tack (no momentum to carry the bow through the
+    # wind), and bearing away far swings the bow into a lee shore. So the way
+    # out is planned roughly straight ahead. If no such leg leads anywhere, any
+    # sailable leg is allowed instead.
+    escape_max_turn: 45.0
 
     # Longest leg the planner will consider (in meters).
     # 0 derives it from the map, which is the only value that never truncates a

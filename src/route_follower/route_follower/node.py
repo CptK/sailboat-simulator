@@ -151,20 +151,22 @@ class RouteFollower(Node):
 
     # ── subscriptions ─────────────────────────────────────────────────────────
 
-    def _prospective_target(self, route: list[WayPoint]) -> WayPoint | None:
-        """The waypoint `_step` will steer at once it has skipped reached ones.
+    def _prospective_index(self, route: list[WayPoint]) -> int:
+        """Index of the waypoint `_step` will steer at once it has skipped reached ones.
 
         Every published route starts at the boat, so the first waypoint is
         always already reached; this reproduces the skip without waiting a tick.
         """
-        if not route:
-            return None
-        if self.location is None:
-            return route[0]
-        for waypoint in route:
+        if not route or self.location is None:
+            return 0
+        for index, waypoint in enumerate(route):
             if self.location.distance(waypoint) >= self.config.dist_threshold:
-                return waypoint
-        return route[-1]
+                return index
+        return len(route) - 1
+
+    def _prospective_target(self, route: list[WayPoint]) -> WayPoint | None:
+        """The waypoint `_step` will steer at once it has skipped reached ones."""
+        return route[self._prospective_index(route)] if route else None
 
     def _on_target_route(self, msg: RouteMsg) -> None:
         """Accept a new route to follow, replacing any current one.
@@ -184,8 +186,14 @@ class RouteFollower(Node):
                     and old_target.distance(new_target) < self.config.dist_threshold)
 
         self.route = route
-        self.target_index = 0
-        if not same_leg:
+        if same_leg:
+            # Start at the target already, not at the boat's own position.
+            # `_step` treats reaching a waypoint as starting a fresh leg and
+            # cancels the maneuver — so starting at index 0 would undo the
+            # survival this branch exists for, one tick later.
+            self.target_index = self._prospective_index(route)
+        else:
+            self.target_index = 0
             self.maneuver = None
         self.completed = False
         self.get_logger().info(

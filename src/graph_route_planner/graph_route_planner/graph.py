@@ -290,6 +290,115 @@ def visible_from(point, nodes: list, navigable, max_leg_distance: float,
     return index[clear].tolist()
 
 
+def escape_edges(point, nodes: list, body, navigable, model: SailingModel,
+                 max_leg_distance: float, min_leg_distance: float = 0.0,
+                 segment_cost: float = 0.0, shore_penalty: float = 0.0,
+                 heading: float | None = None, max_turn: float = 180.0) -> dict:
+    """Costed edges out of the shore strip, for a point the margin excludes.
+
+    A boat that has drifted inside the margin cannot see any graph node through
+    the eroded area, so it is attached through the real water instead: any leg
+    that stays on water and is sailable is offered. Being allowed out is not the
+    same as wanting out quickly, though — on time alone the search would happily
+    run along the shore inside the strip if that heads towards the goal. So the
+    time spent in the strip is charged again, ``shore_penalty`` times over::
+
+        cost = time * (1 + shore_penalty * fraction_of_leg_in_strip) + segment_cost
+
+    With a large penalty the search first minimises time near the shore and
+    only then total time, which is what a skipper does: get off the shore first,
+    then sail for the mark. It is time, not distance, because on a lee shore
+    the quickest way off is often a close reach, not straight away from land.
+
+    Only outgoing edges are produced: the point is where the route starts, and
+    nothing should route back into the strip through it.
+
+    Given the boat's ``heading``, only legs it can take *without a maneuver*
+    are offered: on the tack it is already on, and at most ``max_turn``
+    degrees from where it points. A boat this close to shore may have no speed
+    — it may be pinned against the land — and a tack needs speed to carry the
+    bow through the wind, while bearing away swings the bow towards a lee
+    shore. Straight ahead, or nearly, is what it can actually do.
+
+    Args:
+        point: The position inside the strip, ``(east, north)`` in metres.
+        nodes: Candidate targets, all inside `navigable`.
+        body: The un-eroded water body; escape legs must stay inside it.
+        navigable: The eroded area; whatever of a leg lies outside it is strip.
+        model: The boat's sailing model.
+        max_leg_distance: Longest leg to consider, in metres.
+        min_leg_distance: Shortest leg to consider, in metres.
+        segment_cost: The per-leg charge, as on every other edge.
+        shore_penalty: Extra weight on the time spent in the strip. 0 makes
+            the strip free, i.e. merely legal.
+        heading: The boat's heading, compass degrees, or None to allow any
+            sailable leg.
+        max_turn: With a heading, the largest turn onto a leg, degrees.
+
+    Returns:
+        ``{node: cost}`` for every sailable escape leg.
+    """
+    arr = np.asarray(nodes, dtype=float)
+    if len(arr) == 0:
+        return {}
+
+    origin = np.asarray(point, dtype=float)
+    span = np.hypot(arr[:, 0] - origin[0], arr[:, 1] - origin[1])
+    index = np.flatnonzero((span >= min_leg_distance) & (span <= max_leg_distance))
+    if index.size == 0:
+        return {}
+
+    starts = np.broadcast_to(origin, (index.size, 2))
+    segments = _segments(starts, arr[index])
+    shapely.prepare(body)
+    clear = shapely.covers(body, segments)
+    index, segments, starts = index[clear], segments[clear], starts[clear]
+    if index.size == 0:
+        return {}
+
+    ends = arr[index]
+    ok = model.headings_are_sailable(starts, ends)
+    if heading is not None:
+        ok &= _no_maneuver_needed(starts, ends, heading, model.wind_bearing_deg, max_turn)
+    index, segments, starts, ends = index[ok], segments[ok], starts[ok], ends[ok]
+    if index.size == 0:
+        return {}
+
+    # The boat sails a straight leg at one speed, so the share of the time spent
+    # in the strip is the share of the length that lies outside the eroded area.
+    length = span[index]
+    safe = shapely.length(shapely.intersection(segments, navigable))
+    exposed = np.clip(1.0 - safe / np.maximum(length, 1e-12), 0.0, 1.0)
+    times = model.sailing_times(starts, ends)
+    costs = times * (1.0 + shore_penalty * exposed) + segment_cost
+
+    return {nodes[i]: float(c) for i, c in zip(index.tolist(), costs)}
+
+
+def _no_maneuver_needed(starts, ends, heading: float, wind_bearing: float,
+                        max_turn: float):
+    """Which legs the boat can turn onto from `heading` without tacking or jibing.
+
+    The headings with the wind on one side form an open half-circle, so the
+    short turn between two of them never passes through the wind or dead
+    downwind: staying on the same tack is exactly "no maneuver".
+
+    Args:
+        starts: Leg starts, shape (n, 2).
+        ends: Leg ends, shape (n, 2).
+        heading: The boat's heading, compass degrees.
+        wind_bearing: Where the wind blows from, compass degrees.
+        max_turn: The largest turn allowed, degrees.
+
+    Returns:
+        A boolean array of shape (n,).
+    """
+    legs = np.degrees(np.arctan2(ends[:, 0] - starts[:, 0], ends[:, 1] - starts[:, 1])) % 360.0
+    same_tack = ((wind_bearing - legs) % 360.0 < 180.0) == ((wind_bearing - heading) % 360.0 < 180.0)
+    turn = np.abs((legs - heading + 180.0) % 360.0 - 180.0)
+    return same_tack & (turn <= max_turn)
+
+
 def cost_pairs(nodes: list, pairs: list, model: SailingModel,
                segment_cost: float = 0.0) -> dict:
     """Turn visible pairs into a directed adjacency costed for one wind.

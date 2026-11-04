@@ -11,8 +11,9 @@ position through the via points still ahead, and publishes the new route. The
 steering node simply receives it — deciding the path is this node's job alone.
 
     /planning/mission ─┐
-    /sense/wind        ─┼─> graph_route_planner ──> /planning/target_route
-    /sense/boat_info   ─┘                                    │
+    /sense/wind        ─┤
+    /sense/boat_info   ─┼─> graph_route_planner ──> /planning/target_route
+    /sense/collision   ─┘                                    │
                                                              v
                                                      route_follower ──> /planning/desired_heading
 
@@ -31,6 +32,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from shapely.geometry import LineString, Point
+from shapely.prepared import prep
+from std_msgs.msg import Bool
 
 # Boat messages
 from boat_msgs.msg import BoatInfo
@@ -40,12 +43,15 @@ from boat_msgs.msg import Wind
 
 # Planning backend — plain Python, no ROS.
 from graph_route_planner import DEFAULT_MAP
+from graph_route_planner.graph import navigable_area
 from graph_route_planner.map_loader import SailMap, load_kml
 from graph_route_planner.planner import (
     CachedPlanner,
     NoWaterError,
     PlannerConfig,
     Position,
+    snap_to_navigable,
+    snap_to_water,
 )
 from graph_route_planner.sailing import SailingModel
 
@@ -90,6 +96,10 @@ class Config(BaseModel):
         5.0, ge=0,
         description="Degrees inside the no-go zone before drift triggers a replan",
     )
+    margin_replan_depth: float = Field(
+        0.5, ge=0,
+        description="Metres inside the shore margin before the boat is replanned out of it",
+    )
 
     # Search tuning — see PlannerConfig for what each one does.
     margin: float = Field(..., gt=0, description="Shore clearance must be larger than 0")
@@ -105,6 +115,14 @@ class Config(BaseModel):
         1.0, ge=0,
         description="Fixed time charge per route leg, biasing the search toward fewer turns",
     )
+    shore_penalty: float = Field(
+        20.0, ge=0,
+        description="Extra weight on time spent inside the shore margin when starting there",
+    )
+    escape_max_turn: float = Field(
+        45.0, ge=0, le=180,
+        description="Largest turn, degrees, onto the first leg out of the shore margin",
+    )
 
     # Logging
     time_between_missing_values_logs: float = Field(
@@ -118,6 +136,15 @@ class Config(BaseModel):
                 f"no_go_replan_margin ({self.no_go_replan_margin}) must be below "
                 f"min_tack_angle ({self.min_tack_angle}), or drift can never "
                 f"trigger a replan at all"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def validate_margin_replan_depth(self) -> "Config":
+        if self.margin_replan_depth >= self.margin:
+            raise ValueError(
+                f"margin_replan_depth ({self.margin_replan_depth}) must be below "
+                f"margin ({self.margin}), or the boat is on the shore before it replans"
             )
         return self
 
@@ -149,6 +176,8 @@ class Config(BaseModel):
             min_leg_distance=self.min_leg_distance,
             max_leg_distance=self.max_leg_distance or None,
             segment_cost=self.segment_cost,
+            shore_penalty=self.shore_penalty,
+            escape_max_turn=self.escape_max_turn,
         )
 
     def __str__(self) -> str:
@@ -190,7 +219,17 @@ class GraphRoutePlanner(Node):
         # boat position is attached with a single O(n) pass.
         self.planner = CachedPlanner(self.map.water, self.config.to_planner_config())
 
+        # The water clear of the shore margin, map-wide. The replan check asks
+        # how far the boat is outside it, every plan interval.
+        self.safe_water = navigable_area(self.map.water, self.config.margin)
+        self.safe_water_prepared = prep(self.safe_water)
+
+        # When the simulation last reported the boat touching land. A grounding
+        # since the last plan means that plan is not working.
+        self.last_grounding_time: datetime = datetime.min
+
         self.boat: Position | None = None
+        self.boat_heading: float | None = None
         self.wind_direction: float | None = None
 
         # The mission and how far through it the boat has got. via_index is the
@@ -215,6 +254,7 @@ class GraphRoutePlanner(Node):
         self.create_subscription(RouteMsg, "/planning/mission", self._on_mission_change, 1)
         self.create_subscription(Wind, "/sense/wind", self._on_wind_change, 1)
         self.create_subscription(BoatInfo, "/sense/boat_info", self._on_boat_info, 1)
+        self.create_subscription(Bool, "/sense/collision", self._on_collision, 1)
 
         # PUBLISHER - INIT
         self._publisher_target_route = self.create_publisher(
@@ -233,12 +273,15 @@ class GraphRoutePlanner(Node):
             off_course_threshold=self.get_parameter("off_course_threshold").value,
             min_time_between_replanning=self.get_parameter("min_time_between_replanning").value,
             no_go_replan_margin=self.get_parameter("no_go_replan_margin").value,
+            margin_replan_depth=self.get_parameter("margin_replan_depth").value,
             margin=self.get_parameter("margin").value,
             grid_spacing=self.get_parameter("grid_spacing").value,
             merge_threshold=self.get_parameter("merge_threshold").value,
             min_leg_distance=self.get_parameter("min_leg_distance").value,
             max_leg_distance=self.get_parameter("max_leg_distance").value,
             segment_cost=self.get_parameter("segment_cost").value,
+            shore_penalty=self.get_parameter("shore_penalty").value,
+            escape_max_turn=self.get_parameter("escape_max_turn").value,
             time_between_missing_values_logs=self.get_parameter(
                 "time_between_missing_values_logs"
             ).value,
@@ -282,8 +325,16 @@ class GraphRoutePlanner(Node):
 
     def _on_boat_info(self, msg: BoatInfo) -> None:
         self.boat = (float(msg.x), float(msg.y))
+        self.boat_heading = float(msg.heading)
         self._update_progress()
         self._advance_route_index()
+
+    def _on_collision(self, msg: Bool) -> None:
+        # Contact flickers on and off while the boat grinds along the shore, so
+        # only the latest contact time is kept; the replan check compares it
+        # with the last plan.
+        if msg.data:
+            self.last_grounding_time = datetime.now()
 
     def _on_mission_change(self, msg: RouteMsg) -> None:
         """Accept a new mission: the via points to round, in order."""
@@ -297,6 +348,27 @@ class GraphRoutePlanner(Node):
         if off_water:
             self.get_logger().error(f"Mission via points not on water: {off_water} — ignoring mission.")
             return
+
+        # A via point closer to shore than the margin can never be reached by a
+        # route that keeps the margin, so it is moved to the nearest point that
+        # can. The move is at most the margin, which stays inside dist_threshold
+        # for any sensible setting, so the mark still counts as rounded where it
+        # was placed. Done once here, not per plan, so it is logged once.
+        snapped: list[Position] = []
+        for index, point in enumerate(via):
+            try:
+                moved = snap_to_navigable(self.map.water, point, self.config.margin)
+            except NoWaterError as err:
+                self.get_logger().error(f"Mission via point {index} {point}: {err} — ignoring mission.")
+                return
+            if moved != point:
+                self.get_logger().warn(
+                    f"Mission via point {index} {point} is within the {self.config.margin} m "
+                    f"shore margin; moved {math.dist(point, moved):.2f} m to "
+                    f"({moved[0]:.2f}, {moved[1]:.2f})"
+                )
+            snapped.append(moved)
+        via = snapped
 
         self.get_logger().info(f"New mission received: {len(via)} via points {via}")
         self.mission = via
@@ -381,8 +453,21 @@ class GraphRoutePlanner(Node):
     def _replan_reason(self) -> str | None:
         """Why the current route should be replanned, or None to keep it.
 
-        Three triggers, and the order matters — the cheapest and most specific
-        first:
+        Five triggers. The first two are about safety and come first:
+
+        a. The boat has run aground since the last plan. Whatever that plan was,
+           it is not working. Rate-limited like every trigger, so a boat stuck
+           on the shore retries every `min_time_between_replanning` seconds.
+        b. The boat is more than `margin_replan_depth` inside the shore margin.
+           Legs hug the margin's edge, so leeway on a close-hauled leg carries
+           the boat into it long before it is off course by
+           `off_course_threshold` — and the hull can reach land before then.
+           The depth is hysteresis: without it every brush with the edge would
+           replan. It does not fire while the boat is still sailing the first
+           leg of a route that itself started in the margin — that leg *is* the
+           way out, and replanning it would only restart the maneuver.
+
+        Then the three drift triggers, the cheapest and most specific first:
 
         1. The boat can no longer sail at the waypoint it is steering at. This
            is the one that catches leeway. The route's own waypoints never move,
@@ -408,6 +493,16 @@ class GraphRoutePlanner(Node):
         route, boat = self.planned_route, self.boat
         if route is None or boat is None or len(route) < 2:
             return None
+
+        if self.last_grounding_time > self.last_plan_time:
+            return "ran aground"
+
+        depth = self.safe_water.distance(Point(boat))
+        if depth > self.config.margin_replan_depth:
+            escaping = (not self.safe_water_prepared.covers(Point(route[0]))
+                        and self.route_index <= 1)
+            if not escaping:
+                return (f"{depth:.1f} m inside the {self.config.margin:.1f} m shore margin")
 
         model = self._sailing_model()
         index = min(self.route_index, len(route) - 1)
@@ -443,14 +538,28 @@ class GraphRoutePlanner(Node):
         if boat is None:
             return
 
+        # A grounded boat's reference point can sit just over the shoreline,
+        # where nothing can be planned. Start from the nearest water instead —
+        # centimetres away, so the follower still starts where the boat is.
+        try:
+            start = snap_to_water(self.map.water, boat)
+        except NoWaterError as err:
+            self.get_logger().error(f"Cannot plan from {boat}: {err}")
+            return
+        if start != boat:
+            self.get_logger().warn(
+                f"Boat is on land at ({boat[0]:.2f}, {boat[1]:.2f}); planning from the "
+                f"nearest water, {math.dist(boat, start):.2f} m away"
+            )
+
         # Always start at the boat: the follower restarts at waypoint 0 of any
         # route it receives, so a route starting anywhere else would send it back.
-        points: list[Position] = [boat] + self.mission[self.via_index:]
+        points: list[Position] = [start] + self.mission[self.via_index:]
         if len(points) < 2:
             return
 
         model = self._sailing_model()
-        planned = self._plan_through(points, model)
+        planned = self._plan_through(points, model, self.boat_heading)
         self.last_plan_time = datetime.now()
 
         if planned is None:
@@ -466,13 +575,16 @@ class GraphRoutePlanner(Node):
             f"tack limit {self.config.min_tack_angle:.0f}°"
         )
 
-    def _plan_through(self, points: list[Position],
-                      model: SailingModel) -> tuple[list[Position], list[bool]] | None:
+    def _plan_through(self, points: list[Position], model: SailingModel,
+                      heading: float | None = None) -> tuple[list[Position], list[bool]] | None:
         """Plan the water between each consecutive pair of points.
 
         Args:
             points: Positions to visit in order, starting at the boat.
             model: The boat's sailing model for the current wind.
+            heading: The boat's heading, compass degrees. Only the first leg
+                starts where the boat is, so only that leg uses it — it limits
+                the way out of the shore margin to turns the boat can make.
 
         Returns:
             ``(route, is_soft)`` of equal length, or None if any leg could not be
@@ -486,7 +598,8 @@ class GraphRoutePlanner(Node):
 
         for index, (start, goal) in enumerate(zip(points, points[1:])):
             try:
-                leg = self.planner.plan(start, goal, model)
+                leg = self.planner.plan(start, goal, model,
+                                        heading=heading if index == 0 else None)
             except NoWaterError as err:
                 self.get_logger().error(f"Leg {index} ({start} -> {goal}) cannot be planned: {err}")
                 return None

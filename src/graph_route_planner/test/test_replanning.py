@@ -7,8 +7,11 @@ attributes it reads. That keeps the triggers under test without a live graph.
 
 import math
 import types
+from datetime import datetime
 
 import pytest
+from shapely.geometry import box
+from shapely.prepared import prep
 
 from graph_route_planner.node import GraphRoutePlanner
 from graph_route_planner.sailing import SailingModel
@@ -16,17 +19,26 @@ from graph_route_planner.sailing import SailingModel
 WIND = 0.0          # from due north, so a bearing of B degrees is B degrees off the wind
 TACK_LIMIT = 50.0
 
+#: Water so wide that the shore triggers never fire unless a test asks for them.
+OPEN_WATER = box(-1e4, -1e4, 1e4, 1e4)
 
-def make(route, boat, index, *, margin=5.0, off_course=10.0, dist=5.0, wind=WIND):
+
+def make(route, boat, index, *, margin=5.0, off_course=10.0, dist=5.0, wind=WIND,
+         safe_water=OPEN_WATER, shore_margin=2.0, depth=0.5,
+         grounded=datetime.min, planned=datetime.min):
     """A stand-in carrying exactly what `_replan_reason` reads."""
     config = types.SimpleNamespace(
         dist_threshold=dist,
         off_course_threshold=off_course,
         min_tack_angle=TACK_LIMIT,
         no_go_replan_margin=margin,
+        margin=shore_margin,
+        margin_replan_depth=depth,
     )
     node = types.SimpleNamespace(planned_route=route, boat=boat, route_index=index,
-                                 config=config)
+                                 config=config, safe_water=safe_water,
+                                 safe_water_prepared=prep(safe_water),
+                                 last_grounding_time=grounded, last_plan_time=planned)
     node._sailing_model = lambda: SailingModel.from_bearing(wind, no_go_deg=TACK_LIMIT)
     return node
 
@@ -167,3 +179,54 @@ def test_route_index_never_rewinds():
 def test_a_short_route_is_never_replanned():
     assert reason(make([(0.0, 0.0)], (0.0, 0.0), 0)) is None
     assert reason(make(None, (0.0, 0.0), 0)) is None
+
+
+# ── the shore triggers ────────────────────────────────────────────────────────
+
+#: Safe water north of y = 0; the shore margin is the strip below it.
+SAFE = box(-100.0, 0.0, 100.0, 100.0)
+#: An east-west leg along the margin's edge — where routes run.
+EDGE_ROUTE = [(-50.0, 0.0), (0.0, 0.0), (50.0, 0.0)]
+
+
+def test_a_boat_deep_in_the_margin_replans():
+    node = make(EDGE_ROUTE, (-10.0, -0.8), 1, safe_water=SAFE)
+    assert "shore margin" in reason(node)
+
+
+def test_brushing_the_margin_does_not_replan():
+    """Legs hug the edge; a few centimetres of leeway must not thrash."""
+    assert reason(make(EDGE_ROUTE, (-10.0, -0.3), 1, safe_water=SAFE)) is None
+
+
+def test_the_escape_leg_is_not_replanned():
+    """A route that starts in the margin is the way out; let the boat sail it."""
+    escape = [(-10.0, -1.5), (20.0, 10.0), (50.0, 10.0)]
+    assert reason(make(escape, (-9.0, -1.2), 1, safe_water=SAFE)) is None
+
+
+def test_drifting_back_into_the_margin_after_escaping_replans():
+    escape = [(-10.0, -1.5), (20.0, 10.0), (50.0, 0.0)]
+    assert "shore margin" in reason(make(escape, (30.0, -1.0), 2, safe_water=SAFE))
+
+
+def test_a_grounding_since_the_last_plan_replans():
+    plan = datetime(2026, 1, 1, 12, 0, 0)
+    node = make(EDGE_ROUTE, (-10.0, 5.0), 1, planned=plan,
+                grounded=datetime(2026, 1, 1, 12, 0, 3))
+    assert reason(node) == "ran aground"
+
+
+def test_a_grounding_before_the_last_plan_does_not():
+    plan = datetime(2026, 1, 1, 12, 0, 3)
+    node = make(EDGE_ROUTE, (-10.0, 5.0), 1, planned=plan,
+                grounded=datetime(2026, 1, 1, 12, 0, 0))
+    assert reason(node) is None
+
+
+def test_even_the_escape_leg_replans_when_it_runs_aground():
+    escape = [(-10.0, -1.5), (20.0, 10.0), (50.0, 10.0)]
+    plan = datetime(2026, 1, 1, 12, 0, 0)
+    node = make(escape, (-9.0, -1.8), 1, safe_water=SAFE, planned=plan,
+                grounded=datetime(2026, 1, 1, 12, 0, 3))
+    assert reason(node) == "ran aground"
