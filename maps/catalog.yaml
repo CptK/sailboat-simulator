@@ -1,0 +1,51 @@
+# Every map the simulation and the planners know, by name.
+#
+# Use a name anywhere a map is expected:
+#   python scripts/run_simulation_graph.py --map <scenario>   (scenarios name a map)
+#   ros2 launch launch/launch_graph.py map:=<name>
+#   the map_path parameter of simulation_node and graph_route_planner_node
+#   python scripts/render_maps.py <name>                      (to look at it)
+#
+# Entry fields:
+#   file:      KML file in this directory (hand-drawn, or an OpenStreetMap
+#              coastline export from overpass-turbo with natural=coastline)
+#   scale:     multiply real distances by this; 0.02 means 1:50. The boat is
+#              not scaled, so this shrinks an archipelago to sailable size.
+#   crop:      [lon_min, lat_min, lon_max, lat_max] in degrees: the area kept.
+#              Its centre becomes local (0, 0). OSM exports need one whenever
+#              coastline runs off the edge of the file (mainland, big islands):
+#              every such coastline must cross the crop box completely.
+#   simplify:  drop coastline detail smaller than this (metres, after scaling)
+#   min_area:  drop islands smaller than this (m², after scaling)
+#   description: free text
+
+landgraben:
+  file: Landgraben.kml
+  description: Pond in Darmstadt with an island and a fountain (about 84 x 94 m)
+
+test:
+  file: Test.kml
+  description: Landgraben plus a lake on the island, to exercise nested water
+
+openwater:
+  file: OpenWater.kml
+  description: 240 x 240 m of open water with a square course area in the middle
+
+kornaten:
+  file: Kornaten.kml
+  description: Kornati archipelago, Croatia (OpenStreetMap), at 1:50
+  # The northern strip is left out: Dugi Otok, Pasman and the mainland are cut
+  # off at the top of the export there, so their coastline cannot be closed.
+  crop: [15.10, 43.615, 15.58, 43.91]
+  scale: 0.02
+  simplify: 0.3
+  min_area: 1.0
+
+zirje_kaprije:
+  file: Zirje_Kaprije.kml
+  description: Zirje and Kaprije with the surrounding islets, Croatia (OpenStreetMap), at 1:50
+  # The mainland coast (north and east edges of the export) is left out.
+  crop: [15.575, 43.618, 15.81, 43.772]
+  scale: 0.02
+  simplify: 0.3
+  min_area: 1.0
