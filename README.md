@@ -149,18 +149,29 @@ All maps live in [`maps/`](maps) (installed as the `sail_maps` package), named i
 [`maps/catalog.yaml`](maps/catalog.yaml): `landgraben`, `openwater`, `test`, and
 two archipelagos from Croatia, `kornaten` and `zirje_kaprije`. Those come from
 OpenStreetMap coastline exports (overpass-turbo, `natural=coastline`), cropped and
-scaled down 1:50 so the boat sails between real islands. The simulation and the
+scaled down 1:30 so the boat sails between real islands. The simulation and the
 graph planner load a map by its catalog name, so both always see the same
 geometry; the boat collides with land.
 
+A **scenario** is a YAML file in [`scenarios/`](scenarios) that puts a course on
+a map: the boat's start, wind, buoys and via points (format in
+[`scenarios/README.md`](scenarios/README.md)).
+
 ```bash
-python scripts/run_simulation_graph.py --map zirje_kaprije   # sail a course on a map
-python scripts/render_maps.py --overview --scenarios          # look at the maps and courses
+python scripts/scenario_editor.py my_course --map kornaten       # build one with the mouse
+python scripts/run_simulation_graph.py --scenario zirje_kaprije  # sail a scenario
+python scripts/run_simulation_graph.py --list                    # list scenarios
+python scripts/run_simulation_graph.py --check -s my_course      # validate only
+python scripts/render_maps.py --overview --scenarios             # maps, courses, planned routes
 ```
 
-To add a map, put the KML in `maps/`, add a catalog entry (for OSM exports: a
-`crop`, and a `scale`), check it with `render_maps.py <name> --overview`, and add
-a course to `SCENARIOS` in `scripts/run_simulation_graph.py`.
+To make a map bigger or smaller, run `python scripts/rescale_map.py <map> 1:N`; it
+also moves every scenario on that map (their positions are in the map's scaled
+metres). To add a map, put the KML in `maps/`, add a catalog entry (for OSM exports: a
+`crop`, and a `scale`) and check it with `render_maps.py <name> --overview`. To add
+a course, use the editor (or copy a file in `scenarios/` and edit it); the run script checks it
+(structure, and that everything is on water) before launching anything, and
+`pytest scripts/test_scenario.py` checks every scenario file.
 
 ### Interactive Simulation
 

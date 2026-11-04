@@ -15,8 +15,8 @@ crop box drawn in red — the view to use when choosing a crop.
     python scripts/render_maps.py                       # every map in the catalog
     python scripts/render_maps.py kornaten --overview   # one map, plus its source
     python scripts/render_maps.py maps/Some.kml         # any KML file
-    python scripts/render_maps.py --scenarios           # overlay run_simulation_graph.py
-                                                        # courses with their planned routes
+    python scripts/render_maps.py --scenarios           # overlay the courses from
+                                                        # scenarios/*.yaml, with planned routes
 
 Images go to --out (default: map_previews/).
 """
@@ -57,19 +57,24 @@ def draw_polygon(ax, poly, **style):
     ax.add_patch(PathPatch(MplPath(verts, codes), **style))
 
 
-def scenarios_for(map_name: str) -> dict:
-    """Courses from run_simulation_graph.py that sail on this map."""
+def scenarios_for(map_name: str, kml: Path) -> list:
+    """Scenarios (scenarios/*.yaml) that sail on this map."""
     sys.path.insert(0, str(REPO / "scripts"))
-    try:
-        import run_simulation_graph
-    except Exception as err:  # keep rendering even if the script cannot be imported
-        print(f"  (could not read scenarios: {err})")
-        return {}
-    return {k: v for k, v in run_simulation_graph.SCENARIOS.items()
-            if str(v.get("map", "")).lower() in (map_name.lower(), f"{map_name}.kml".lower())}
+    from scenario import ScenarioError, list_scenarios, load_scenario
+
+    found = []
+    for name in list_scenarios():
+        try:
+            sc = load_scenario(name)
+        except ScenarioError as err:
+            print(f"  (skipping scenario {name}: {err})")
+            continue
+        if sc.map.lower() in (map_name.lower(), kml.name.lower(), kml.stem.lower()):
+            found.append(sc)
+    return found
 
 
-def plan_course(sail_map, scenario: dict, margin: float) -> list:
+def plan_course(sail_map, scenario, margin: float) -> list:
     """The route the graph planner would sail for a scenario, leg by leg.
 
     Uses the scenario's own planner settings and wind, so what is drawn is
@@ -78,12 +83,12 @@ def plan_course(sail_map, scenario: dict, margin: float) -> list:
     from graph_route_planner.planner import CachedPlanner, PlannerConfig
     from graph_route_planner.sailing import SailingModel
 
-    config = PlannerConfig(margin=margin, grid_spacing=scenario["grid_spacing"],
+    config = PlannerConfig(margin=margin, grid_spacing=scenario.grid_spacing,
                            merge_threshold=1.5, segment_cost=1.0,
-                           max_leg_distance=scenario.get("max_leg_distance") or None)
+                           max_leg_distance=scenario.max_leg_distance or None)
     planner = CachedPlanner(sail_map.water, config)
-    model = SailingModel.from_bearing(float(scenario["wind"][0]), no_go_deg=50)
-    pts = [tuple(scenario["boat"]), *map(tuple, scenario["waypoints"])]
+    model = SailingModel.from_bearing(scenario.wind_direction, no_go_deg=50)
+    pts = [scenario.boat, *scenario.waypoints]
     route = [pts[0]]
     for a, b in zip(pts, pts[1:]):
         leg = planner.plan(a, b, model)
@@ -93,21 +98,20 @@ def plan_course(sail_map, scenario: dict, margin: float) -> list:
     return route
 
 
-def draw_scenario(ax, name: str, scenario: dict, sail_map, margin: float):
-    bx, by = scenario["boat"]
-    ax.plot(bx, by, "k^", ms=9, zorder=6, label=f"start ({name})")
-    pts = [scenario["boat"], *scenario["waypoints"]]
-    xs, ys = zip(*pts)
+def draw_scenario(ax, scenario, sail_map, margin: float):
+    bx, by = scenario.boat
+    ax.plot(bx, by, "k^", ms=9, zorder=6, label=f"start ({scenario.name})")
+    xs, ys = zip(*[scenario.boat, *scenario.waypoints])
     ax.plot(xs, ys, "k--", lw=0.6, alpha=0.5, zorder=5)
     try:
         route = plan_course(sail_map, scenario, margin)
         rx, ry = zip(*route)
         ax.plot(rx, ry, "-", color="#c0392b", lw=1.4, zorder=6, label="planned route")
         length = sum(math.dist(p, q) for p, q in zip(route, route[1:]))
-        print(f"  course '{name}': planned route {length:.0f} m")
+        print(f"  scenario '{scenario.name}': planned route {length:.0f} m")
     except Exception as err:
-        print(f"  course '{name}': could not plan ({err})")
-    wind_from = math.radians(scenario["wind"][0])
+        print(f"  scenario '{scenario.name}': could not plan ({err})")
+    wind_from = math.radians(scenario.wind_direction)
     x0, y0, x1, y1 = sail_map.bounds
     span = max(x1 - x0, y1 - y0)
     # Arrow pointing where the wind blows to, in the top-left corner.
@@ -115,14 +119,16 @@ def draw_scenario(ax, name: str, scenario: dict, sail_map, margin: float):
                         y1 - 0.08 * span - 0.05 * span * math.cos(wind_from)),
                 xytext=(x0 + 0.12 * span, y1 - 0.08 * span), zorder=9,
                 arrowprops=dict(arrowstyle="-|>", color="black", lw=1.5))
-    ax.text(x0 + 0.12 * span, y1 - 0.03 * span, f"wind {scenario['wind'][1]:g} m/s",
+    ax.text(x0 + 0.12 * span, y1 - 0.03 * span, f"wind {scenario.wind_speed:g} m/s",
             ha="center", fontsize=8, zorder=9)
-    for i, (x, y) in enumerate(scenario["waypoints"], 1):
-        ax.annotate(str(i), (x, y), fontsize=8, ha="center", va="center", zorder=7,
+    for b in scenario.buoys:
+        ax.plot(b.east, b.north, "o", color=b.rgb, mec="black", ms=7, zorder=7)
+    # Via point numbers sit beside the point, so a buoy on it does not hide them.
+    for i, (x, y) in enumerate(scenario.waypoints, 1):
+        ax.plot(x, y, "o", mfc="none", mec="black", ms=11, mew=0.8, zorder=8)
+        ax.annotate(str(i), (x, y), xytext=(9, 9), textcoords="offset points",
+                    fontsize=8, ha="center", va="center", zorder=9,
                     bbox=dict(boxstyle="circle,pad=0.2", fc="white", ec="black", lw=0.6))
-    for b in scenario["buoys"]:
-        rgb = (b.get("r", 1.0), b.get("g", 0.5), b.get("b", 0.0))
-        ax.plot(b["east"], b["north"], "o", color=rgb, mec="black", ms=7, zorder=7)
 
 
 def render_map(ax, sail_map, margin: float, title: str):
@@ -189,7 +195,7 @@ def describe(sail_map, opts: dict) -> str:
     verts = sum(len(f.polygon.exterior.coords) +
                 sum(len(r.coords) for r in f.polygon.interiors) for f in sail_map.features)
     scale = opts.get("scale", 1.0)
-    ratio = f"1:{1 / scale:g}" if scale != 1 else "1:1"
+    ratio = f"1:{1 / scale:.4g}" if scale != 1 else "1:1"
     return (f"{sail_map.name}  —  scale {ratio}, {x1 - x0:.0f} × {y1 - y0:.0f} m, "
             f"{len(land)} land pieces, {verts} vertices")
 
@@ -205,7 +211,7 @@ def main():
     parser.add_argument("--overview", action="store_true",
                         help="also draw the raw source file with the crop box")
     parser.add_argument("--scenarios", action="store_true",
-                        help="overlay courses from run_simulation_graph.py")
+                        help="overlay the scenarios (scenarios/*.yaml) on each map")
     parser.add_argument("--show", action="store_true", help="open a window as well")
     args = parser.parse_args()
 
@@ -233,8 +239,8 @@ def main():
             title = describe(sail_map, opts)
             render_map(axes[0][0], sail_map, args.margin, title)
             if args.scenarios:
-                for sname, scenario in scenarios_for(name).items():
-                    draw_scenario(axes[0][0], sname, scenario, sail_map, args.margin)
+                for scenario in scenarios_for(name, kml):
+                    draw_scenario(axes[0][0], scenario, sail_map, args.margin)
             print(title)
         else:
             axes[0][0].set_title(f"{name}: could not load (see console)", fontsize=10)

@@ -68,7 +68,7 @@ Maps live in the repository's `maps/` directory (the `sail_maps` package), share
 with the simulation. `maps/catalog.yaml` names them — `landgraben` (a real pond
 with an island), `test` (the same pond plus a lake *on* the island), `openwater`
 (a square of open water) and two OpenStreetMap archipelagos from Croatia,
-`kornaten` and `zirje_kaprije`, cropped and scaled down 1:50 so a small boat can
+`kornaten` and `zirje_kaprije`, cropped and scaled down 1:30 so a small boat can
 sail between the islands. The `map_path` parameter takes a catalog name, a file
 in `maps/`, or any path; `python scripts/render_maps.py` draws them.
 

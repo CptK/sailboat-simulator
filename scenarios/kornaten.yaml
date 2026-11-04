@@ -1,0 +1,23 @@
+description: >
+  The Kornati archipelago, Croatia, from OpenStreetMap at 1:30 (about
+  1290 x 1090 m). From the open sea in the south-west, through the outer island
+  chain into the channel along Kornat, down the channel, around the south-east
+  tip of Kornat and up its inner side. About 1 km of sailing, roughly a
+  quarter of an hour. Wind is the maestral from the north-west.
+map: kornaten
+boat: {east: -333.3, north: -166.7}
+wind: {direction: 315, speed: 4}
+buoys:
+  - {east: -83.3, north: 113.3, color: orange}
+  - {east: 146.7, north: -21.7, color: red}
+  - {east: 391.7, north: -36.7, color: green}
+  - {east: 441.7, north: 50, color: yellow}
+waypoints:
+  - [-83.3, 113.3]     # through the outer chain into the Kornat channel
+  - [146.7, -21.7]     # down the channel
+  - [391.7, -36.7]    # round the south-east tip of Kornat
+  - [441.7, 50]     # up the inner side
+planner:
+  grid_spacing: 33.3
+  max_leg_distance: 200   # large map: keeps the planner's graph build to seconds
+  planning_delay: 25

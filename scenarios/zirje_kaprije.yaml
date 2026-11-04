@@ -1,0 +1,24 @@
+description: >
+  Zirje and Kaprije, Croatia, from OpenStreetMap at 1:30 (about 630 x 570 m).
+  A lap from the open sea in the west: along the north shore of Zirje, north
+  through the gap between the two middle islands, across under the mainland
+  coast, and back out west between the islands. Wind is the summer maestral
+  from the north-west. Buoys mark the via points.
+map: zirje_kaprije
+boat: {east: -283.3, north: -16.7}
+wind: {direction: 315, speed: 4}
+buoys:
+  - {east: -103.3, north: -61.7, color: orange}
+  - {east: 120, north: -20, color: red}
+  - {east: 75, north: 133.3, color: green}
+  - {east: -113.3, north: 103.3, color: yellow}
+waypoints:
+  - [-103.3, -61.7]    # along the north shore of Zirje
+  - [120, -20]     # into the gap between the middle islands
+  - [75, 133.3]      # under the mainland coast
+  - [-113.3, 103.3]     # back west between the islands
+  - [-220, 13.3]     # out into the open sea
+planner:
+  grid_spacing: 25
+  max_leg_distance: 200   # large map: keeps the planner's graph build to seconds
+  planning_delay: 15

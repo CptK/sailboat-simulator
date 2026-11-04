@@ -2,9 +2,9 @@
 """
 Script to launch the ROS2 sailboat simulation using the graph-based planner.
 
-By default, the same environment as run_simulation.py — same boat, buoys, wind
-and via points.
-The one difference is who decides the route between the via points:
+The default scenario, open_water, is the same environment as run_simulation.py
+— same boat, buoys, wind and via points. The one difference is who decides the
+route between the via points:
 
     run_simulation.py       publishes the via points to /planning/target_route,
                             and route_planner sails straight at each in turn.
@@ -19,11 +19,15 @@ With the wind from the north, the leg north up the east side is dead upwind, so
 that is where the two differ: the graph planner tacks it.
 
 Usage:
-    python scripts/run_simulation_graph.py                  # open water (default)
-    python scripts/run_simulation_graph.py --map landgraben  # the Landgraben pond
+    python scripts/run_simulation_graph.py                          # open_water (default)
+    python scripts/run_simulation_graph.py --scenario landgraben    # a file in scenarios/
+    python scripts/run_simulation_graph.py --scenario my/course.yaml
+    python scripts/run_simulation_graph.py --list                   # list scenarios
+    python scripts/run_simulation_graph.py --check -s kornaten      # validate, do not run
 
-Edit SCENARIOS below to change a map's boat start, buoys, wind or mission
-via points, or to add a scenario for another map.
+A scenario is a YAML file (see scenarios/README.md): the map, the boat's start,
+wind, buoys, the mission via points and planner settings. It is checked —
+structure, and that everything is on water — before anything is launched.
 """
 
 import argparse
@@ -34,131 +38,20 @@ import sys
 import os
 import threading
 
+from scenario import (Scenario, ScenarioError, check_positions, list_scenarios,
+                      load_scenario)
+
 # =============================================================================
-# CONFIGURATION - Adjust these values as needed
+# CONFIGURATION - scenarios live in scenarios/*.yaml; these are timings only
 # =============================================================================
 
-# Each scenario is one map plus everything placed on it. Pick one on the
-# command line with --map (default: open_water).
-#
-#   boat:      starting position (east, north) in meters
-#   buoys:     list of dicts with east, north (meters) and optional r, g, b
-#              colour components 0.0-1.0 (orange if omitted)
-#   wind:      (angle, speed): degrees [0, 360) the wind comes FROM
-#              (0 = North, 90 = East), and m/s [0, 25]
-#   waypoints: mission via points (east, north) in meters, rounded in order;
-#              the planner fills in the water between them
-#   map:       a map name from maps/catalog.yaml (see scripts/render_maps.py
-#              to look at one), a KML file in maps/, or a path
-#   grid_spacing: planner tacking-grid spacing in meters (finer for small maps)
-#   max_leg_distance: optional; the planner's longest leg in meters. Large maps
-#              need a limit (100-150) to build the planner's graph in seconds.
-#   planning_delay: optional; seconds to let the planner build its graph and
-#              plan before checking for a route (default PLANNING_DELAY)
-SCENARIOS = {
-    # Open water with a square course area in the middle.
-    "open_water": {
-        "map": "openwater",
-        "grid_spacing": 10.0,
-        "boat": (-10.0, 60.0),
-        "buoys": [
-            {"east": 0.0, "north": 0.0},                                  # Default orange
-            {"east": 0.0, "north": 50.0, "r": 1.0, "g": 0.0, "b": 0.0},   # Red
-            {"east": 50.0, "north": 0.0, "r": 0.0, "g": 1.0, "b": 0.0},   # Green
-            {"east": 50.0, "north": 50.0, "r": 0.0, "g": 0.0, "b": 1.0},  # Blue
-        ],
-        "wind": (0.1, 4.0),
-        "waypoints": [
-            (-10.0, -10.0),
-            (60.0, -10.0),
-            (60.0, 60.0),
-            (-10.0, 60.0),
-        ],
-    },
-    # The Landgraben pond: about 84 x 94 m with a large island in the middle and
-    # a fountain to the south-west. The course is a counter-clockwise lap of the
-    # island. With the wind from the south, the narrow (~8 m) east channel is a
-    # downwind run; the only upwind leg is south through the wide west channel,
-    # where there is room to tack. Buoys form a small course area in the open
-    # southern basin (with a yellow gate) plus one blue mark in the north-west.
-    "landgraben": {
-        "map": "landgraben",
-        "grid_spacing": 6.0,
-        "boat": (0.0, -38.0),
-        "buoys": [
-            {"east": -10.0, "north": -30.0},                                 # Orange
-            {"east": 22.0, "north": -22.0, "r": 1.0, "g": 0.0, "b": 0.0},    # Red
-            {"east": -30.0, "north": -12.0, "r": 0.0, "g": 0.8, "b": 0.0},   # Green
-            {"east": -4.0, "north": -18.0, "r": 1.0, "g": 1.0, "b": 0.0},    # Yellow gate
-            {"east": 6.0, "north": -18.0, "r": 1.0, "g": 1.0, "b": 0.0},     # Yellow gate
-            {"east": -25.0, "north": 30.0, "r": 0.0, "g": 0.0, "b": 1.0},    # Blue
-        ],
-        "wind": (180.0, 4.0),
-        "waypoints": [
-            (27.0, -12.0),   # into the east channel
-            (27.0, 8.0),     # up the east channel
-            (5.0, 38.0),     # across the north
-            (-32.0, 10.0),   # down the west channel
-            (0.0, -35.0),    # back to the start
-        ],
-    },
-    # Zirje and Kaprije, Croatia, from OpenStreetMap at 1:50 (about 380 x 340 m).
-    # A lap from the open sea in the west: along the north shore of Zirje,
-    # north through the gap between the two middle islands, across under the
-    # mainland coast, and back out west between the islands. Wind is the
-    # summer maestral from the north-west. Buoys mark the via points.
-    "zirje_kaprije": {
-        "map": "zirje_kaprije",
-        "grid_spacing": 15.0,
-        "max_leg_distance": 120.0,
-        "planning_delay": 15.0,
-        "boat": (-170.0, -10.0),
-        "buoys": [
-            {"east": -62.0, "north": -37.0},                                 # Orange
-            {"east": 72.0, "north": -12.0, "r": 1.0, "g": 0.0, "b": 0.0},    # Red
-            {"east": 45.0, "north": 80.0, "r": 0.0, "g": 0.8, "b": 0.0},     # Green
-            {"east": -68.0, "north": 62.0, "r": 1.0, "g": 1.0, "b": 0.0},    # Yellow
-        ],
-        "wind": (315.0, 4.0),
-        "waypoints": [
-            (-62.0, -37.0),   # along the north shore of Zirje
-            (72.0, -12.0),    # into the gap between the middle islands
-            (45.0, 80.0),     # under the mainland coast
-            (-68.0, 62.0),    # back west between the islands
-            (-132.0, 8.0),    # out into the open sea
-        ],
-    },
-    # The Kornati archipelago, Croatia, from OpenStreetMap at 1:50 (about
-    # 770 x 660 m). From the open sea in the south-west, through the outer
-    # island chain into the channel along Kornat, down the channel, around the
-    # south-east tip of Kornat and up its inner side. About 630 m of sailing,
-    # roughly ten minutes. Wind is the maestral from the north-west.
-    "kornaten": {
-        "map": "kornaten",
-        "grid_spacing": 20.0,
-        "max_leg_distance": 120.0,
-        "planning_delay": 25.0,
-        "boat": (-200.0, -100.0),
-        "buoys": [
-            {"east": -50.0, "north": 68.0},                                  # Orange
-            {"east": 88.0, "north": -13.0, "r": 1.0, "g": 0.0, "b": 0.0},    # Red
-            {"east": 235.0, "north": -22.0, "r": 0.0, "g": 0.8, "b": 0.0},   # Green
-            {"east": 265.0, "north": 30.0, "r": 1.0, "g": 1.0, "b": 0.0},    # Yellow
-        ],
-        "wind": (315.0, 4.0),
-        "waypoints": [
-            (-50.0, 68.0),    # through the outer chain into the Kornat channel
-            (88.0, -13.0),    # down the channel
-            (235.0, -22.0),   # round the south-east tip of Kornat
-            (265.0, 30.0),    # up the inner side
-        ],
-    },
-}
+DEFAULT_SCENARIO = "open_water"
 
 # Delay settings (seconds)
 STARTUP_DELAY = 5.0  # Time to wait for ROS system to initialize
 MESSAGE_DELAY = 0.5  # Time between sending messages
-PLANNING_DELAY = 5.0  # Time to allow the graph planner to expand the mission
+# How long to let the graph planner expand the mission is per scenario
+# (planner: planning_delay), since large maps need longer.
 SHUTDOWN_DELAY = 5.0  # Time to wait after route completion before shutting down
 
 # =============================================================================
@@ -166,34 +59,68 @@ SHUTDOWN_DELAY = 5.0  # Time to wait after route completion before shutting down
 # =============================================================================
 
 
-def build_env_create_message(scenario: dict) -> str:
+def build_env_create_message(scenario: Scenario) -> str:
     """Build the EnvironmentCreation message as a YAML string."""
-    buoy_strings = []
-    for buoy in scenario["buoys"]:
-        r = buoy.get("r", 1.0)
-        g = buoy.get("g", 0.5)
-        b = buoy.get("b", 0.0)
-        buoy_strings.append(
-            f"{{east: {buoy['east']}, north: {buoy['north']}, color: {{r: {r}, g: {g}, b: {b}}}}}"
-        )
-    buoy_list = ", ".join(buoy_strings)
-    boat_east, boat_north = scenario["boat"]
-    wind_angle, wind_speed = scenario["wind"]
-    return f"{{boat_east: {boat_east}, boat_north: {boat_north}, buoys: [{buoy_list}], wind_direction: {wind_angle}, wind_speed: {wind_speed}}}"
+    buoy_list = ", ".join(
+        f"{{east: {b.east}, north: {b.north}, "
+        f"color: {{r: {b.rgb[0]}, g: {b.rgb[1]}, b: {b.rgb[2]}}}}}"
+        for b in scenario.buoys
+    )
+    east, north = scenario.boat
+    return (f"{{boat_east: {east}, boat_north: {north}, buoys: [{buoy_list}], "
+            f"wind_direction: {scenario.wind_direction}, wind_speed: {scenario.wind_speed}}}")
 
 
-def build_wind_message(scenario: dict) -> str:
+def build_wind_message(scenario: Scenario) -> str:
     """Build the Wind message as a YAML string."""
-    wind_angle, wind_speed = scenario["wind"]
-    return f"{{angle: {wind_angle}, speed: {wind_speed}}}"
+    return f"{{angle: {scenario.wind_direction}, speed: {scenario.wind_speed}}}"
 
 
-def build_mission_message(scenario: dict) -> str:
+def build_mission_message(scenario: Scenario) -> str:
     """Build the mission (Route of via points) as a YAML string."""
     waypoint_list = ", ".join(
-        f"{{east: {e}, north: {n}}}" for e, n in scenario["waypoints"]
+        f"{{east: {e}, north: {n}}}" for e, n in scenario.waypoints
     )
     return f"{{waypoints: [{waypoint_list}]}}"
+
+
+def print_scenarios() -> None:
+    """List the scenario files with the first line of their description."""
+    for name in list_scenarios():
+        try:
+            sc = load_scenario(name)
+            summary = sc.description.split(". ")[0].rstrip(".")
+            print(f"  {name:<16} map {sc.map:<14} {summary}")
+        except ScenarioError as err:
+            print(f"  {name:<16} INVALID: {err}")
+
+
+def load_and_check(spec: str) -> Scenario | None:
+    """Load a scenario and check it against its map; print problems.
+
+    Returns:
+        The scenario, or None if it cannot be run.
+    """
+    try:
+        scenario = load_scenario(spec)
+    except ScenarioError as err:
+        print(f"Scenario error: {err}")
+        return None
+    try:
+        errors, warnings = check_positions(scenario)
+    except (FileNotFoundError, ValueError) as err:
+        print(f"Scenario error: {scenario.path}: map '{scenario.map}': {err}")
+        return None
+    for warning in warnings:
+        print(f"Warning ({scenario.name}): {warning}")
+    if errors:
+        print(f"Scenario '{scenario.name}' ({scenario.path}) cannot be run:")
+        for error in errors:
+            print(f"  - {error}")
+        print("Check positions with: python scripts/render_maps.py "
+              f"{scenario.map} --scenarios")
+        return None
+    return scenario
 
 
 def publish_message(topic: str, msg_type: str, message: str) -> None:
@@ -204,11 +131,30 @@ def publish_message(topic: str, msg_type: str, message: str) -> None:
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("--map", choices=sorted(SCENARIOS), default="open_water",
-                        help="scenario to run (default: open_water)")
+    parser = argparse.ArgumentParser(
+        description=__doc__.split("\n\n")[0],
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="Scenarios: " + ", ".join(list_scenarios()))
+    parser.add_argument("--scenario", "-s", default=DEFAULT_SCENARIO,
+                        help=f"scenario name (a file in scenarios/) or path to a YAML "
+                             f"file (default: {DEFAULT_SCENARIO})")
+    # Older name for the same option, from when scenarios were named after maps.
+    parser.add_argument("--map", dest="scenario", help=argparse.SUPPRESS)
+    parser.add_argument("--list", action="store_true", help="list scenarios and exit")
+    parser.add_argument("--check", action="store_true",
+                        help="validate the scenario against its map and exit")
     args = parser.parse_args()
-    scenario = SCENARIOS[args.map]
+
+    if args.list:
+        print_scenarios()
+        return
+    scenario = load_and_check(args.scenario)
+    if scenario is None:
+        sys.exit(1)
+    if args.check:
+        print(f"Scenario '{scenario.name}' is valid: map {scenario.map}, "
+              f"{len(scenario.waypoints)} via points, {len(scenario.buoys)} buoys.")
+        return
 
     ros_process = None
     shutting_down = False
@@ -251,19 +197,21 @@ def main():
     print("=" * 60)
     print("Sailboat Simulation Launcher (graph-based planner)")
     print("=" * 60)
-    print(f"Scenario: {args.map} (map {scenario['map']})")
-    print(f"Boat position: {scenario['boat']}")
-    print(f"Buoys: {scenario['buoys']}")
-    print(f"Wind: {scenario['wind'][0]} deg @ {scenario['wind'][1]} m/s")
-    print(f"Mission via points: {scenario['waypoints']}")
+    print(f"Scenario: {scenario.name} ({scenario.path})")
+    print(f"Map: {scenario.map}")
+    print(f"Boat position: {scenario.boat}")
+    print("Buoys: " + (", ".join(f"{b.color or b.rgb} at ({b.east:g}, {b.north:g})"
+                                 for b in scenario.buoys) or "none"))
+    print(f"Wind: {scenario.wind_direction:g} deg @ {scenario.wind_speed:g} m/s")
+    print(f"Mission via points: {scenario.waypoints}")
     print("=" * 60)
 
     # 1. Launch the ROS system, including the graph planner
     print("\n[1/5] Launching ROS system (with graph_route_planner)...")
     ros_process = subprocess.Popen(
         ["ros2", "launch", "launch/launch_graph.py",
-         f"map:={scenario['map']}", f"grid_spacing:={scenario['grid_spacing']}",
-         f"max_leg_distance:={scenario.get('max_leg_distance', 0.0)}"],
+         f"map:={scenario.map}", f"grid_spacing:={scenario.grid_spacing}",
+         f"max_leg_distance:={scenario.max_leg_distance}"],
         start_new_session=True,
     )
 
@@ -299,7 +247,7 @@ def main():
     )
 
     # 5. Report what the planner made of it.
-    planning_delay = scenario.get("planning_delay", PLANNING_DELAY)
+    planning_delay = scenario.planning_delay
     print(f"\n[5/5] Waiting {planning_delay}s for the planner to expand the mission...")
     time.sleep(planning_delay)
     try:
@@ -315,7 +263,7 @@ def main():
         )
         planned = result.stdout.count("east:")
         if planned:
-            print(f"Planner expanded {len(scenario['waypoints'])} via points into {planned} waypoints.")
+            print(f"Planner expanded {len(scenario.waypoints)} via points into {planned} waypoints.")
         else:
             print("No route published yet — check the graph_route_planner log above.")
     except Exception as err:

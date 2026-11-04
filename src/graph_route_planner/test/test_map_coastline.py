@@ -220,11 +220,12 @@ def test_catalog_lists_every_map():
 
 
 @pytest.mark.parametrize("name, sea, land", [
-    ("kornaten", (-200, -100), (-40, 90)),        # open sea; on Kornat
-    ("zirje_kaprije", (-170, -10), (-60, -100)),  # open sea; on Zirje
+    # Real-world metres from the crop centre, so the test holds at any scale.
+    ("kornaten", (-10000, -5000), (-2000, 4500)),       # open sea; on Kornat
+    ("zirje_kaprije", (-8500, -500), (-3000, -5000)),   # open sea; on Zirje
 ])
 def test_real_coastline_maps_load(name, sea, land):
     m = load_map(name)
-    assert m.water.contains(Point(sea))
-    assert not m.water.contains(Point(land))
+    assert m.water.contains(Point(sea[0] * m.scale, sea[1] * m.scale))
+    assert not m.water.contains(Point(land[0] * m.scale, land[1] * m.scale))
     assert len([f for f in m.features if not f.is_water]) > 20

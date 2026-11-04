@@ -1,0 +1,19 @@
+description: >
+  Open water with a square course area in the middle. A lap around it; with
+  the wind from the north, the leg north up the east side is dead upwind, so
+  the planner tacks it.
+map: openwater
+boat: {east: -10, north: 60}
+wind: {direction: 0.1, speed: 4}
+buoys:
+  - {east: 0, north: 0, color: orange}
+  - {east: 0, north: 50, color: red}
+  - {east: 50, north: 0, color: green}
+  - {east: 50, north: 50, color: blue}
+waypoints:
+  - [-10, -10]
+  - [60, -10]
+  - [60, 60]
+  - [-10, 60]
+planner:
+  grid_spacing: 10

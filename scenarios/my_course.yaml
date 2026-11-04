@@ -1,0 +1,24 @@
+map: kornaten
+boat: {east: 559.2, north: -210}
+wind: {direction: 61, speed: 5.5}
+buoys:
+  - {east: 538.2, north: -208.3, color: orange}
+  - {east: 357.8, north: -166.3, color: orange}
+  - {east: 289.5, north: -208.3, color: orange}
+  - {east: 132, north: -112, color: orange}
+  - {east: 163.5, north: -43.7, color: orange}
+  - {east: -90.5, north: 113.8, color: orange}
+  - {east: -225.3, north: 119.2, color: orange}
+  - {east: -372.3, north: 453.5, color: green}
+waypoints:
+  - [354.3, -162.8]
+  - [293, -225.8]
+  - [123.2, -119]
+  - [179.2, -47.2]
+  - [-88.7, 115.7]
+  - [-230.5, 103.3]
+  - [-365.3, 448.3]
+planner:
+  grid_spacing: 31.7
+  max_leg_distance: 200
+  planning_delay: 20

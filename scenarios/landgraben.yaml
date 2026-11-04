@@ -1,0 +1,25 @@
+description: >
+  The Landgraben pond (about 84 x 94 m) with a large island in the middle and
+  a fountain to the south-west. A counter-clockwise lap of the island. With
+  the wind from the south, the narrow (~8 m) east channel is a downwind run;
+  the only upwind leg is south through the wide west channel, where there is
+  room to tack. Buoys form a small course area in the open southern basin
+  (with a yellow gate) plus one blue mark in the north-west.
+map: landgraben
+boat: {east: 0, north: -38}
+wind: {direction: 180, speed: 4}
+buoys:
+  - {east: -10, north: -30, color: orange}
+  - {east: 22, north: -22, color: red}
+  - {east: -30, north: -12, color: green}
+  - {east: -4, north: -18, color: yellow}   # gate
+  - {east: 6, north: -18, color: yellow}    # gate
+  - {east: -25, north: 30, color: blue}
+waypoints:
+  - [27, -12]     # into the east channel
+  - [27, 8]       # up the east channel
+  - [5, 38]       # across the north
+  - [-32, 10]     # down the west channel
+  - [0, -35]      # back to the start
+planner:
+  grid_spacing: 6
