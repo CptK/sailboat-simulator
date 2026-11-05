@@ -24,6 +24,30 @@ Usage:
     python scripts/run_simulation_graph.py --scenario my/course.yaml
     python scripts/run_simulation_graph.py --list                   # list scenarios
     python scripts/run_simulation_graph.py --check -s kornaten      # validate, do not run
+    python scripts/run_simulation_graph.py -s kornaten --video-speedup 1   # real-speed video
+    python scripts/run_simulation_graph.py -s kornaten --no-video  # sail only
+
+Every run gets its own directory, runs/<scenario>_<date>_<time>/, with a copy
+of the scenario, the recording of the sail and the video:
+
+    runs/my_course_2026-11-05_14-07-12/
+        scenario.yaml   recording.npz   video_4x.mp4
+
+The video is rendered after the sail, as the scenario's video section says
+(speedup 4 and 30 fps unless it sets otherwise; see scenarios/README.md).
+While sailing, the simulation runs in real time and records every frame's
+state; render_video then renders the video from that in parallel. To render a
+run again, e.g. at another speed (it adds video_1x.mp4 next to the other):
+
+    ros2 run simulation render_video --speedup 1          # the latest run
+    ros2 run simulation render_video runs/<run> --speedup 1
+
+Ctrl+C ends the sail early; what was sailed is still rendered. A second Ctrl+C
+skips the rendering.
+
+Rarely needed: --realtime-factor sails faster or slower than real time,
+--workers sets the render processes, and --live-video renders while sailing
+(slow without a GPU, since the run waits for every frame).
 
 A scenario is a YAML file (see scenarios/README.md): the map, the boat's start,
 wind, buoys, the mission via points and planner settings. It is checked —
@@ -31,6 +55,7 @@ structure, and that everything is on water — before anything is launched.
 """
 
 import argparse
+import shutil
 import subprocess
 import time
 import signal
@@ -38,7 +63,7 @@ import sys
 import os
 import threading
 
-from scenario import (Scenario, ScenarioError, check_positions, list_scenarios,
+from scenario import (REPO, Scenario, ScenarioError, check_positions, list_scenarios,
                       load_scenario)
 
 # =============================================================================
@@ -53,6 +78,10 @@ MESSAGE_DELAY = 0.5  # Time between sending messages
 # How long to let the graph planner expand the mission is per scenario
 # (planner: planning_delay), since large maps need longer.
 SHUTDOWN_DELAY = 5.0  # Time to wait after route completion before shutting down
+
+# Each run's directory goes here; the file names are render_video's.
+RUNS_DIR = REPO / "runs"
+RECORDING = "recording.npz"
 
 # =============================================================================
 # END CONFIGURATION
@@ -140,6 +169,18 @@ def main():
                              f"file (default: {DEFAULT_SCENARIO})")
     # Older name for the same option, from when scenarios were named after maps.
     parser.add_argument("--map", dest="scenario", help=argparse.SUPPRESS)
+    parser.add_argument("--video-speedup", type=float, default=None, metavar="X",
+                        help="simulated seconds per second of video (default: the "
+                             "scenario's, else 4); higher renders fewer frames")
+    parser.add_argument("--realtime-factor", type=float, default=1.0, metavar="X",
+                        help="simulated seconds per wall-clock second while sailing "
+                             "(default: 1)")
+    parser.add_argument("--workers", type=int, default=None, metavar="N",
+                        help="render processes (default: from the core count)")
+    parser.add_argument("--no-video", action="store_true",
+                        help="sail and record, but do not render the video")
+    parser.add_argument("--live-video", action="store_true",
+                        help="render while sailing instead of afterwards (slow)")
     parser.add_argument("--list", action="store_true", help="list scenarios and exit")
     parser.add_argument("--check", action="store_true",
                         help="validate the scenario against its map and exit")
@@ -148,6 +189,10 @@ def main():
     if args.list:
         print_scenarios()
         return
+    if args.video_speedup is not None and args.video_speedup <= 0:
+        parser.error("--video-speedup must be positive")
+    if args.realtime_factor <= 0:
+        parser.error("--realtime-factor must be positive")
     scenario = load_and_check(args.scenario)
     if scenario is None:
         sys.exit(1)
@@ -155,6 +200,13 @@ def main():
         print(f"Scenario '{scenario.name}' is valid: map {scenario.map}, "
               f"{len(scenario.waypoints)} via points, {len(scenario.buoys)} buoys.")
         return
+
+    speedup = args.video_speedup or scenario.video_speedup
+    render_video = scenario.video_enabled and not args.no_video
+    run_dir = RUNS_DIR / f"{scenario.name}_{time.strftime('%Y-%m-%d_%H-%M-%S')}"
+    run_dir.mkdir(parents=True)
+    shutil.copyfile(scenario.path, run_dir / "scenario.yaml")
+    video_path = run_dir / f"video_{speedup:g}x.mp4"
 
     ros_process = None
     shutting_down = False
@@ -174,9 +226,10 @@ def main():
             except ProcessLookupError:
                 pass
 
-            # Wait briefly for graceful shutdown
+            # Wait for a graceful shutdown: the simulation saves its recording
+            # (or finalizes the live video) on the way out
             try:
-                ros_process.wait(timeout=3)
+                ros_process.wait(timeout=20)
             except subprocess.TimeoutExpired:
                 # Force kill if still running
                 print("Force killing...")
@@ -186,115 +239,133 @@ def main():
                     pass
                 ros_process.wait()
 
-    def signal_handler(sig, frame):
-        """Handle Ctrl+C to cleanly shut down."""
+    def on_interrupt(sig, frame):
+        """Ctrl+C: end the sail; a second Ctrl+C then interrupts rendering."""
+        signal.signal(signal.SIGINT, signal.default_int_handler)
+        raise KeyboardInterrupt
+
+    def on_terminate(sig, frame):
+        """SIGTERM: shut down without rendering."""
         shutdown()
         sys.exit(0)
 
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
+    signal.signal(signal.SIGINT, on_interrupt)
+    signal.signal(signal.SIGTERM, on_terminate)
 
-    print("=" * 60)
-    print("Sailboat Simulation Launcher (graph-based planner)")
-    print("=" * 60)
-    print(f"Scenario: {scenario.name} ({scenario.path})")
-    print(f"Map: {scenario.map}")
-    print(f"Boat position: {scenario.boat}")
-    print("Buoys: " + (", ".join(f"{b.color or b.rgb} at ({b.east:g}, {b.north:g})"
-                                 for b in scenario.buoys) or "none"))
-    print(f"Wind: {scenario.wind_direction:g} deg @ {scenario.wind_speed:g} m/s")
-    print(f"Mission via points: {scenario.waypoints}")
-    print("=" * 60)
-
-    # 1. Launch the ROS system, including the graph planner
-    print("\n[1/5] Launching ROS system (with graph_route_planner)...")
-    ros_process = subprocess.Popen(
-        ["ros2", "launch", "launch/launch_graph.py",
-         f"map:={scenario.map}", f"grid_spacing:={scenario.grid_spacing}",
-         f"max_leg_distance:={scenario.max_leg_distance}"],
-        start_new_session=True,
-    )
-
-    print(f"Waiting {STARTUP_DELAY}s for system to initialize...")
-    time.sleep(STARTUP_DELAY)
-
-    # 2. Send environment creation message
-    print("\n[2/5] Initializing environment...")
-    publish_message(
-        "/env/create",
-        "boat_msgs/msg/EnvironmentCreation",
-        build_env_create_message(scenario)
-    )
-    time.sleep(MESSAGE_DELAY)
-
-    # 3. Send wind message
-    # The graph planner needs the wind before it can plan: the route depends on it.
-    print("\n[3/5] Setting wind conditions...")
-    publish_message(
-        "/env/wind",
-        "boat_msgs/msg/Wind",
-        build_wind_message(scenario)
-    )
-    time.sleep(MESSAGE_DELAY)
-
-    # 4. Send the mission. Unlike run_simulation.py, these via points are not the
-    #    route: the graph planner expands them into one on /planning/target_route.
-    print("\n[4/5] Sending mission via points to the graph planner...")
-    publish_message(
-        "/planning/mission",
-        "boat_msgs/msg/Route",
-        build_mission_message(scenario)
-    )
-
-    # 5. Report what the planner made of it.
-    planning_delay = scenario.planning_delay
-    print(f"\n[5/5] Waiting {planning_delay}s for the planner to expand the mission...")
-    time.sleep(planning_delay)
-    try:
-        # The route is latched (RELIABLE + TRANSIENT_LOCAL), and it was published
-        # seconds ago, so this late-joining reader must match BOTH of those to be
-        # handed the held sample. A default reader receives it only by luck, and
-        # setting durability alone (without reliability) matches neither.
-        result = subprocess.run(
-            ["ros2", "topic", "echo", "--once", "--timeout", "20",
-             "--qos-reliability", "reliable", "--qos-durability", "transient_local",
-             "/planning/target_route", "boat_msgs/msg/Route"],
-            capture_output=True, text=True, timeout=25,
-        )
-        planned = result.stdout.count("east:")
-        if planned:
-            print(f"Planner expanded {len(scenario.waypoints)} via points into {planned} waypoints.")
+    def sail():
+        """Launch, set up the scenario, and sail until the route is completed."""
+        nonlocal ros_process
+        print("=" * 60)
+        print("Sailboat Simulation Launcher (graph-based planner)")
+        print("=" * 60)
+        print(f"Scenario: {scenario.name} ({scenario.path})")
+        print(f"Map: {scenario.map}")
+        print(f"Boat position: {scenario.boat}")
+        print("Buoys: " + (", ".join(f"{b.color or b.rgb} at ({b.east:g}, {b.north:g})"
+                                     for b in scenario.buoys) or "none"))
+        print(f"Wind: {scenario.wind_direction:g} deg @ {scenario.wind_speed:g} m/s")
+        print(f"Mission via points: {scenario.waypoints}")
+        if not render_video:
+            print("Video: none (recording only)")
         else:
-            print("No route published yet — check the graph_route_planner log above.")
-    except Exception as err:
-        print(f"Could not read the planned route: {err}")
+            print(f"Video: {speedup:g}x speed, {scenario.video_fps:g} fps, rendered "
+                  f"{'while sailing' if args.live_video else 'after the sail'}")
+        print(f"Run directory: {run_dir.relative_to(REPO)}")
+        print("=" * 60)
 
-    print("\n" + "=" * 60)
-    print("Simulation running. Press Ctrl+C to stop.")
-    print("Waiting for route completion...")
-    print("=" * 60)
+        # 1. Launch the ROS system, including the graph planner
+        print("\n[1/5] Launching ROS system (with graph_route_planner)...")
+        ros_process = subprocess.Popen(
+            ["ros2", "launch", str(REPO / "launch" / "launch_graph.py"),
+             f"map:={scenario.map}", f"grid_spacing:={scenario.grid_spacing}",
+             f"max_leg_distance:={scenario.max_leg_distance}",
+             f"render_mode:={'video' if args.live_video else 'record'}",
+             f"realtime_factor:={args.realtime_factor}",
+             f"video_speedup:={speedup}",
+             f"recording_output:={run_dir / RECORDING}",
+             f"video_output:={video_path}"],
+            start_new_session=True,
+        )
 
-    # Monitor for route completion in a background thread
-    route_completed = threading.Event()
+        print(f"Waiting {STARTUP_DELAY}s for system to initialize...")
+        time.sleep(STARTUP_DELAY)
 
-    def monitor_route_completion():
-        """Monitor the route completion topic."""
+        # 2. Send environment creation message
+        print("\n[2/5] Initializing environment...")
+        publish_message(
+            "/env/create",
+            "boat_msgs/msg/EnvironmentCreation",
+            build_env_create_message(scenario)
+        )
+        time.sleep(MESSAGE_DELAY)
+
+        # 3. Send wind message
+        # The graph planner needs the wind before it can plan: the route depends on it.
+        print("\n[3/5] Setting wind conditions...")
+        publish_message(
+            "/env/wind",
+            "boat_msgs/msg/Wind",
+            build_wind_message(scenario)
+        )
+        time.sleep(MESSAGE_DELAY)
+
+        # 4. Send the mission. Unlike run_simulation.py, these via points are not the
+        #    route: the graph planner expands them into one on /planning/target_route.
+        print("\n[4/5] Sending mission via points to the graph planner...")
+        publish_message(
+            "/planning/mission",
+            "boat_msgs/msg/Route",
+            build_mission_message(scenario)
+        )
+
+        # 5. Report what the planner made of it.
+        planning_delay = scenario.planning_delay
+        print(f"\n[5/5] Waiting {planning_delay}s for the planner to expand the mission...")
+        time.sleep(planning_delay)
         try:
+            # The route is latched (RELIABLE + TRANSIENT_LOCAL), and it was published
+            # seconds ago, so this late-joining reader must match BOTH of those to be
+            # handed the held sample. A default reader receives it only by luck, and
+            # setting durability alone (without reliability) matches neither.
             result = subprocess.run(
-                ["ros2", "topic", "echo", "--once", "/planning/route_completed", "std_msgs/msg/Bool"],
-                capture_output=True,
-                text=True,
+                ["ros2", "topic", "echo", "--once", "--timeout", "20",
+                 "--qos-reliability", "reliable", "--qos-durability", "transient_local",
+                 "/planning/target_route", "boat_msgs/msg/Route"],
+                capture_output=True, text=True, timeout=25,
             )
-            if "data: true" in result.stdout.lower():
-                route_completed.set()
-        except Exception:
-            pass
+            planned = result.stdout.count("east:")
+            if planned:
+                print(f"Planner expanded {len(scenario.waypoints)} via points into {planned} waypoints.")
+            else:
+                print("No route published yet — check the graph_route_planner log above.")
+        except Exception as err:
+            print(f"Could not read the planned route: {err}")
 
-    monitor_thread = threading.Thread(target=monitor_route_completion, daemon=True)
-    monitor_thread.start()
+        print("\n" + "=" * 60)
+        print("Simulation running. Press Ctrl+C to stop.")
+        print("Waiting for route completion...")
+        print("=" * 60)
 
-    # Keep running until interrupted or route completed
-    try:
+        # Monitor for route completion in a background thread
+        route_completed = threading.Event()
+
+        def monitor_route_completion():
+            """Monitor the route completion topic."""
+            try:
+                result = subprocess.run(
+                    ["ros2", "topic", "echo", "--once", "/planning/route_completed", "std_msgs/msg/Bool"],
+                    capture_output=True,
+                    text=True,
+                )
+                if "data: true" in result.stdout.lower():
+                    route_completed.set()
+            except Exception:
+                pass
+
+        monitor_thread = threading.Thread(target=monitor_route_completion, daemon=True)
+        monitor_thread.start()
+
+        # Keep running until interrupted or route completed
         while ros_process.poll() is None:
             if route_completed.is_set():
                 print("\n" + "=" * 60)
@@ -304,11 +375,36 @@ def main():
                 time.sleep(SHUTDOWN_DELAY)
                 break
             time.sleep(0.5)
+
+    try:
+        sail()
     except KeyboardInterrupt:
-        pass
+        print("\nInterrupted: ending the sail.")
     finally:
         shutdown()
 
+    if args.live_video or not render_video:
+        print(f"\nRun saved in {run_dir.relative_to(REPO)}")
+        return
+    if not (run_dir / RECORDING).exists():
+        print(f"No recording ({run_dir / RECORDING}) was saved — nothing to render.")
+        sys.exit(1)
+    print("\n" + "=" * 60)
+    print("Rendering the video (Ctrl+C to skip)...")
+    print("=" * 60)
+    render_cmd = ["ros2", "run", "simulation", "render_video", str(run_dir.relative_to(REPO)),
+                  "--speedup", f"{speedup:g}", "--fps", f"{scenario.video_fps:g}"]
+    if args.workers:
+        render_cmd += ["--workers", str(args.workers)]
+    try:
+        subprocess.run(render_cmd, check=True, cwd=REPO)
+    except KeyboardInterrupt:
+        print(f"\nRendering skipped. Render later with: {' '.join(render_cmd)}")
+        return
+    except subprocess.CalledProcessError:
+        print(f"Rendering failed. Retry with: {' '.join(render_cmd)}")
+        sys.exit(1)
+    print(f"\nRun saved in {run_dir.relative_to(REPO)}")
 
 if __name__ == "__main__":
     main()

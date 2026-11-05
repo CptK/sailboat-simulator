@@ -23,3 +23,6 @@ waypoints:
   - [0, -35]      # back to the start
 planner:
   grid_spacing: 6
+video:
+  speedup: 2
+  fps: 30

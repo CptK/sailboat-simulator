@@ -16,6 +16,10 @@ A scenario is one file in scenarios/ (or anywhere, given by path):
       grid_spacing: 6          # tacking-grid spacing, metres (default 10)
       max_leg_distance: 120    # longest leg, metres; 0 = from the map (default)
       planning_delay: 15       # seconds to wait for the first route (default 5)
+    video:                                          # optional
+      speedup: 4               # simulated seconds per video second (default 4)
+      fps: 30                  # frames per second of video (default 30)
+      enabled: true            # false: record the run, render no video
 
 Positions are local (east, north) metres of the map, as scripts/render_maps.py
 shows them. `load_scenario` checks the file's structure; `check_positions`
@@ -48,6 +52,8 @@ DEFAULT_COLOR = "orange"
 DEFAULT_GRID_SPACING = 10.0
 DEFAULT_MAX_LEG_DISTANCE = 0.0
 DEFAULT_PLANNING_DELAY = 5.0
+DEFAULT_VIDEO_SPEEDUP = 4.0
+DEFAULT_VIDEO_FPS = 30.0
 
 #: The planner's shore clearance (graph_route_planner parameters.yaml margin).
 #: A via point closer to land than this cannot be reached exactly.
@@ -58,8 +64,9 @@ PLANNER_MARGIN = 2.0
 #: floating point decides either way; that is not a mistake worth refusing.
 LAND_TOLERANCE = 0.5
 
-_TOP_KEYS = {"description", "map", "boat", "wind", "buoys", "waypoints", "planner"}
+_TOP_KEYS = {"description", "map", "boat", "wind", "buoys", "waypoints", "planner", "video"}
 _PLANNER_KEYS = {"grid_spacing", "max_leg_distance", "planning_delay"}
+_VIDEO_KEYS = {"speedup", "fps", "enabled"}
 
 
 class ScenarioError(ValueError):
@@ -87,6 +94,9 @@ class Scenario:
     grid_spacing: float = DEFAULT_GRID_SPACING
     max_leg_distance: float = DEFAULT_MAX_LEG_DISTANCE
     planning_delay: float = DEFAULT_PLANNING_DELAY
+    video_speedup: float = DEFAULT_VIDEO_SPEEDUP
+    video_fps: float = DEFAULT_VIDEO_FPS
+    video_enabled: bool = True
     path: Path | None = None
 
 
@@ -199,6 +209,21 @@ def load_scenario(spec: str, directory: Path = SCENARIOS_DIR) -> Scenario:
             fail(f"planner: unknown key(s) {sorted(extra)} "
                  f"(allowed: {', '.join(sorted(_PLANNER_KEYS))})")
 
+        video = data.get("video") or {}
+        if not isinstance(video, dict):
+            fail("video: expected a mapping")
+        extra = set(video) - _VIDEO_KEYS
+        if extra:
+            fail(f"video: unknown key(s) {sorted(extra)} "
+                 f"(allowed: {', '.join(sorted(_VIDEO_KEYS))})")
+        enabled = video.get("enabled", True)
+        if not isinstance(enabled, bool):
+            fail(f"video enabled: expected true or false, got {enabled!r}")
+        speedup = _number(video.get("speedup", DEFAULT_VIDEO_SPEEDUP), "video speedup")
+        fps = _number(video.get("fps", DEFAULT_VIDEO_FPS), "video fps", 1.0, 120.0)
+        if speedup <= 0:
+            fail(f"video speedup: must be positive, got {speedup:g}")
+
         return Scenario(
             name=path.stem,
             map=data["map"],
@@ -214,6 +239,9 @@ def load_scenario(spec: str, directory: Path = SCENARIOS_DIR) -> Scenario:
                                      "planner max_leg_distance", 0.0),
             planning_delay=_number(planner.get("planning_delay", DEFAULT_PLANNING_DELAY),
                                    "planner planning_delay", 0.0),
+            video_speedup=speedup,
+            video_fps=fps,
+            video_enabled=enabled,
             path=path,
         )
     except ScenarioError as err:
@@ -315,6 +343,14 @@ def scenario_to_yaml(scenario: Scenario) -> str:
         planner.append(f"  planning_delay: {scenario.planning_delay:g}")
     if planner:
         lines += ["planner:", *planner]
+    # Always written, defaults included: how a scenario is rendered is worth
+    # seeing in its file, and dropping default values would silently drop a
+    # setting someone wrote down on purpose.
+    lines += ["video:",
+              f"  speedup: {scenario.video_speedup:g}",
+              f"  fps: {scenario.video_fps:g}"]
+    if not scenario.video_enabled:
+        lines.append("  enabled: false")
     return "\n".join(lines) + "\n"
 
 

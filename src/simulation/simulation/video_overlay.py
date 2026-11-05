@@ -3,6 +3,10 @@
 import numpy as np
 
 
+#: Shown in the top-right corner of the video and viewer while the boat touches land.
+COLLISION_TEXT = "Collision detected"
+
+
 def inset_size(frame_width: int, scale: float, aspect: float = 4 / 3) -> tuple[int, int]:
     """Size (width, height) of a picture-in-picture inset.
 

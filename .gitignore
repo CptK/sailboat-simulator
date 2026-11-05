@@ -212,3 +212,6 @@ __marimo__/
 
 # Map previews from scripts/render_maps.py
 map_previews/
+
+# Simulation runs (recording + video per run) from scripts/run_simulation_graph.py
+runs/

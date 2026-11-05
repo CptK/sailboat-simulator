@@ -22,3 +22,6 @@ planner:
   grid_spacing: 31.7
   max_leg_distance: 200
   planning_delay: 20
+video:
+  speedup: 4
+  fps: 30

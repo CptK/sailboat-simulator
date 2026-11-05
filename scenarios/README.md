@@ -38,8 +38,28 @@ planner:                                        # optional
   grid_spacing: 6          # tacking grid, metres (default 10; ~20 for big maps)
   max_leg_distance: 120    # longest leg, metres; 0 = whole map (default)
   planning_delay: 15       # seconds to wait for the first route (default 5)
+video:                                          # optional
+  speedup: 4               # simulated seconds per video second (default 4)
+  fps: 30                  # video frame rate (default 30)
+  enabled: true            # false: record the sail, render no video
 ```
 
 Positions are the map's local (east, north) metres, as `render_maps.py` draws
 them. Before anything is launched, the run script checks the file and that the
 boat, buoys and via points are on water.
+
+## Runs and videos
+
+Every run is kept in its own directory, `runs/<scenario>_<date>_<time>/`: a
+copy of the scenario, the recording of the sail (`recording.npz`) and the
+video (`video_4x.mp4`, named after its speedup). The video is rendered after
+the sail, as the scenario's `video` section says; rendering costs about 1 s per
+15 frames here, so a higher speedup (fewer frames) renders faster.
+
+`--video-speedup` and `--no-video` override the scenario for one run. To render
+a run again, e.g. at real speed (it adds `video_1x.mp4`, keeping the other):
+
+```bash
+ros2 run simulation render_video --speedup 1             # the latest run
+ros2 run simulation render_video runs/<run> --speedup 1  # a given one
+```

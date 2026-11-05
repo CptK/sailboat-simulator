@@ -128,6 +128,27 @@ def land_from_water(water, half_size: float) -> list:
         return []
     return list(land.geoms) if land.geom_type == "MultiPolygon" else [land]
 
+def load_map_world(map_path: str):
+    """Load a map and size the simulated world around it.
+
+    The simulation node and the offline renderer both build their world with
+    this, so a recording renders with exactly the land it was sailed on.
+
+    Args:
+        map_path: A name from maps/catalog.yaml, a KML file in maps/, or a path
+            (resolved like the graph planner does, crop and scale included).
+
+    Returns:
+        (name, water, half_size, land): the map's name, its navigable water,
+        half the world's side, and the land polygons (see land_from_water).
+    """
+    from graph_route_planner.map_loader import load_map
+
+    sail_map = load_map(map_path)
+    half_size = world_half_size_for(sail_map.water)
+    return sail_map.name, sail_map.water, half_size, land_from_water(sail_map.water, half_size)
+
+
 #: Land is a low grassy bank rising from the water plane (at z = -0.1). It is
 #: tall enough that the onboard camera, about 1.35 m above the water, sees the
 #: shoreline as a band along the horizon rather than a hairline, and low enough

@@ -17,3 +17,6 @@ waypoints:
   - [-10, 60]
 planner:
   grid_spacing: 10
+video:
+  speedup: 2
+  fps: 30

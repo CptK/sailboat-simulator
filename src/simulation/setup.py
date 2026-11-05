@@ -31,6 +31,7 @@ setup(
     entry_points={
         'console_scripts': [
             'simulation_node = simulation.node:main',
+            'render_video = simulation.render_video:main',
         ],
     },
 )

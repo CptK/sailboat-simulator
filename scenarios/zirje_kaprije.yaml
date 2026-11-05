@@ -22,3 +22,6 @@ planner:
   grid_spacing: 25
   max_leg_distance: 200   # large map: keeps the planner's graph build to seconds
   planning_delay: 15
+video:
+  speedup: 4
+  fps: 30

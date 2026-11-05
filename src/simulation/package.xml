@@ -10,6 +10,13 @@
   <!-- Only for reading the KML map, so the rendered land matches the land the
        planner routes around. The simulation runs fine without a map set. -->
   <exec_depend>graph_route_planner</exec_depend>
+  <!-- /clock, when the simulation owns the ROS clock (publish_clock) -->
+  <exec_depend>builtin_interfaces</exec_depend>
+  <exec_depend>rosgraph_msgs</exec_depend>
+  <!-- render_video's progress bar -->
+  <exec_depend>python3-tqdm</exec_depend>
+  <!-- render_video reads a run's scenario.yaml -->
+  <exec_depend>python3-yaml</exec_depend>
 
   <export>
     <build_type>ament_python</build_type>

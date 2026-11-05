@@ -9,11 +9,11 @@ import numpy as np
 
 from simulation.sailboat_simulation import SailboatSimulation
 from simulation.minimap import Minimap
-from simulation.video_overlay import draw_label, inset_size, picture_in_picture
-
-#: Shown in the top-right corner of the video and viewer while the boat touches land.
-COLLISION_TEXT = "Collision detected"
+from simulation.recording import Recording, Scene
+from simulation.video_overlay import COLLISION_TEXT, draw_label, inset_size, picture_in_picture
 from boat_msgs.msg import Wind, RudderAngle, SailAngle, Heading, BoatInfo, EnvironmentCreation, Route
+from builtin_interfaces.msg import Time
+from rosgraph_msgs.msg import Clock
 from std_msgs.msg import Bool
 
 class SimulationNode(Node):
@@ -34,9 +34,36 @@ class SimulationNode(Node):
         /sense/wind (Wind): Current wind conditions in degrees [0, 360)
         /sense/heading (Heading): Current heading in degrees [0, 360)
         /sense/collision (Bool): True while the boat is touching land
+        /clock (Clock): Simulated time, only when publish_clock is true
+
+    Time:
+        With publish_clock false, physics follows the wall clock (real time,
+        or realtime_factor times it).
+
+        With publish_clock true, this node is the ROS clock: it publishes the
+        simulated time on /clock, and the other nodes are expected to run with
+        use_sim_time. While recording video it then steps physics in lockstep
+        with the frames: every frame advances video_speedup / video_fps
+        seconds of simulated time, however long that frame takes to render.
+        The video therefore plays at a constant speed (real speed at
+        video_speedup 1), and the run simply takes as long as rendering needs.
+        Without video it follows the wall clock, as with publish_clock false.
+
+    Recording (render_mode "record"):
+        Nothing is rendered live. Every 1/record_rate simulated seconds the
+        node records what a frame would show (see simulation.recording), and
+        saves it to recording_output on shutdown. render_video then renders
+        the video from it, in parallel and at any speedup. Physics follows the
+        wall clock, so the control loop runs at its full rate.
 
     Parameters:
-        render_mode (str): "none", "viewer" (live window), or "video" (record to file)
+        render_mode (str): "none", "viewer" (live window), "video" (render to a
+            file while running) or "record" (record, render afterwards)
+        recording_output (str): Where render_mode "record" saves the recording
+            (default: simulation_recording.npz)
+        record_rate (float): Frames recorded per simulated second (default: 30)
+        realtime_factor (float): Simulated seconds per wall-clock second when
+            physics follows the wall clock (default: 1.0)
         video_output (str): Output path for video recording (only used when render_mode="video")
         video_fps (int): Frames per second for video recording (default: 30)
         video_width (int): Video width in pixels (default: 1280)
@@ -50,13 +77,21 @@ class SimulationNode(Node):
         minimap_view_size (float): Width in metres of the area the minimap
             shows around the boat, which it follows (default: 300). A map no
             wider than this is shown whole. 0 always shows the whole map.
+        publish_clock (bool): Publish simulated time on /clock and, while
+            recording, step physics frame by frame (default: false). See Time.
+        video_speedup (float): Simulated seconds per second of video when
+            publish_clock is true (default: 1.0, real speed). 2.0 makes a
+            constant 2x timelapse that also renders half as many frames.
     """
 
     def __init__(self):
         super().__init__('simulation_node')
 
         # Declare parameters for rendering
-        self.declare_parameter('render_mode', 'video')  # "none", "viewer", or "video"
+        self.declare_parameter('render_mode', 'video')  # "none", "viewer", "video" or "record"
+        self.declare_parameter('recording_output', 'simulation_recording.npz')
+        self.declare_parameter('record_rate', 30.0)
+        self.declare_parameter('realtime_factor', 1.0)
         self.declare_parameter('video_output', 'simulation.mp4')
         self.declare_parameter('video_fps', 30)
         self.declare_parameter('video_width', 1280)
@@ -70,6 +105,9 @@ class SimulationNode(Node):
         # maps/catalog.yaml, a KML file in maps/, or a path. Empty means open
         # water, which is what launch.py wants — only the graph planner has a map.
         self.declare_parameter('map_path', '')
+        # Own the ROS clock and record frame by frame (see the class docstring)
+        self.declare_parameter('publish_clock', False)
+        self.declare_parameter('video_speedup', 1.0)
 
         self.render_mode = self.get_parameter('render_mode').value
         self.video_output = self.get_parameter('video_output').value
@@ -82,6 +120,17 @@ class SimulationNode(Node):
         self.map_water = None
         self.minimap = None
         self.map_path = self.get_parameter('map_path').value
+        self.publish_clock = bool(self.get_parameter('publish_clock').value)
+        self.video_speedup = float(self.get_parameter('video_speedup').value)
+        if self.video_speedup <= 0:
+            raise ValueError(f'video_speedup must be positive, got {self.video_speedup}')
+        self.realtime_factor = float(self.get_parameter('realtime_factor').value)
+        if self.realtime_factor <= 0:
+            raise ValueError(f'realtime_factor must be positive, got {self.realtime_factor}')
+        self.recording_output = self.get_parameter('recording_output').value
+        self.record_rate = float(self.get_parameter('record_rate').value)
+        if self.record_rate <= 0:
+            raise ValueError(f'record_rate must be positive, got {self.record_rate}')
         self.obstacles = self._load_obstacles()
 
         self.sim = SailboatSimulation(wind_speed=6.0)
@@ -107,9 +156,42 @@ class SimulationNode(Node):
         self.collision_publisher = self.create_publisher(Bool, '/sense/collision', 1)
         self.was_colliding = False
 
-        # Track time for physics stepping
-        self.last_time = self.get_clock().now()
+        # Track time for physics stepping. The wall clock is read with
+        # time.monotonic(), not this node's ROS clock: with publish_clock this
+        # node *is* the ROS clock, and must not wait on itself.
+        self.last_wall_time = time.monotonic()
         self.physics_dt = self.sim.model.opt.timestep
+        # Time owed to physics that is less than one timestep, carried over to
+        # the next tick so that no simulated time is lost to rounding.
+        self.pending_time = 0.0
+        # Simulated time since start, published on /clock. Kept here rather
+        # than read from the MuJoCo model, which is rebuilt (and its time
+        # reset to 0) by /env/create; the ROS clock must never run backwards.
+        self.sim_time = 0.0
+        self.clock_publisher = (self.create_publisher(Clock, '/clock', 10)
+                                if self.publish_clock else None)
+        self._publish_clock()
+
+        # Recording (render_mode "record"): segments start with /env/create
+        self.recording = None
+        self.next_record_time = 0.0
+        if self.render_mode == 'record':
+            self.recording = Recording(
+                map_path=self.map_path,
+                rate=self.record_rate,
+                render={
+                    'fps': self.video_fps,
+                    'width': self.video_width,
+                    'height': self.video_height,
+                    'onboard_inset_scale': self.onboard_inset_scale,
+                    'minimap_inset_scale': self.minimap_inset_scale,
+                    'minimap_view_size': self.minimap_view_size,
+                },
+            )
+            self.get_logger().info(
+                f'Recording at {self.record_rate:g} frames per simulated second '
+                f'to {self.recording_output}; render it with render_video'
+            )
 
         # Rendering state
         self._init_rendering()
@@ -136,13 +218,10 @@ class SimulationNode(Node):
             return []
 
         try:
-            from graph_route_planner.map_loader import load_map
-            from simulation.build_env import land_from_water, world_half_size_for
+            from simulation.build_env import load_map_world
 
-            sail_map = load_map(self.map_path)
-            self.world_half_size = world_half_size_for(sail_map.water)
-            self.map_water = sail_map.water
-            land = land_from_water(sail_map.water, self.world_half_size)
+            map_name, self.map_water, self.world_half_size, land = load_map_world(
+                self.map_path)
         except Exception as err:
             self.get_logger().warn(
                 f"Could not load map '{self.map_path}': {err}. "
@@ -153,7 +232,7 @@ class SimulationNode(Node):
             return []
 
         self.get_logger().info(
-            f"Loaded map '{sail_map.name}': {len(land)} land polygon(s), "
+            f"Loaded map '{map_name}': {len(land)} land polygon(s), "
             f"world {2 * self.world_half_size:.0f} m across"
         )
         return land
@@ -250,12 +329,14 @@ class SimulationNode(Node):
             if self.video_writer is None:
                 return
 
-            # Rate limit frame capture
-            now = time.time()
-            if self.last_render_time is not None:
-                if now - self.last_render_time < self.render_interval:
-                    return
-            self.last_render_time = now
+            # In lockstep every tick is exactly one frame. Otherwise physics
+            # follows the wall clock, so rate limit frame capture to it.
+            if not self._lockstep():
+                now = time.monotonic()
+                if self.last_render_time is not None:
+                    if now - self.last_render_time < self.render_interval:
+                        return
+                self.last_render_time = now
 
             # Render using chase_cam (attached to boat, follows automatically)
             self.renderer.update_scene(self.sim.data, self.camera)
@@ -287,19 +368,61 @@ class SimulationNode(Node):
             except Exception as e:
                 self.get_logger().error(f'Failed to close video writer: {e}')
 
-    def timer_callback(self):
-        # Step physics to match real-time
-        now = self.get_clock().now()
-        elapsed = (now - self.last_time).nanoseconds / 1e9
-        self.last_time = now
+    def _lockstep(self) -> bool:
+        """True when physics advances one video frame per tick (see Time)."""
+        return (self.publish_clock and self.render_mode == 'video'
+                and self.video_writer is not None)
 
-        steps = int(elapsed / self.physics_dt)
+    def _advance(self, duration: float):
+        """Step physics by ``duration`` seconds, carrying any remainder over."""
+        self.pending_time += duration
+        steps = int(self.pending_time / self.physics_dt)
+        self.pending_time -= steps * self.physics_dt
         for _ in range(steps):
             self.sim.step()
+            self.sim_time += self.physics_dt
+            self._record_frame_if_due()
 
-        # Render after physics step
+    def _record_frame_if_due(self):
+        """Record a frame each time simulated time passes 1/record_rate."""
+        if self.recording is None or self.sim_time < self.next_record_time:
+            return
+        self.recording.add_frame(self.sim_time, self.sim.data, self.sim.in_collision())
+        interval = 1.0 / self.record_rate
+        # Schedule on a fixed grid, so frames stay evenly spaced
+        while self.next_record_time <= self.sim_time:
+            self.next_record_time += interval
+
+    def _publish_clock(self):
+        if self.clock_publisher is None:
+            return
+        seconds = int(self.sim_time)
+        nanoseconds = int(round((self.sim_time - seconds) * 1e9))
+        if nanoseconds >= 1_000_000_000:
+            seconds, nanoseconds = seconds + 1, nanoseconds - 1_000_000_000
+        self.clock_publisher.publish(Clock(clock=Time(sec=seconds, nanosec=nanoseconds)))
+
+    def timer_callback(self):
+        now = time.monotonic()
+        elapsed = now - self.last_wall_time
+        self.last_wall_time = now
+
+        if self._lockstep():
+            # One frame's worth of simulated time, however long rendering takes
+            self._advance(self.video_speedup / self.video_fps)
+        else:
+            # Keep up with the wall clock
+            self._advance(elapsed * self.realtime_factor)
+
+        # Publish the new time and state before rendering, so that the other
+        # nodes compute their response while this frame renders and it is
+        # applied from the next physics step on.
+        self._publish_clock()
+        self._publish_state()
         self._render()
 
+    def _publish_state(self):
+        """Publish wind, boat state and collision for the current physics state."""
         status = self.sim.get_status()
 
         # Publish current wind information (degrees from get_status())
@@ -361,6 +484,8 @@ class SimulationNode(Node):
         self.sim.update_route(waypoints_with_current)
         if self.minimap is not None:
             self.minimap.set_route(waypoints_with_current)
+        if self.recording is not None:
+            self.recording.set_route(waypoints_with_current)
 
         if hasattr(self, 'current_route'):
             if waypoints != self.current_route:
@@ -380,6 +505,8 @@ class SimulationNode(Node):
             self.sim.update_route([])
             if self.minimap is not None:
                 self.minimap.set_route([])
+            if self.recording is not None:
+                self.recording.set_route([])
 
     def _on_reset_simulation(self, msg: Bool):
         if msg.data:
@@ -407,14 +534,39 @@ class SimulationNode(Node):
             self.minimap = Minimap(width, height, water=self.map_water,
                                    boat=(msg.boat_east, msg.boat_north), buoys=buoys,
                                    view_size=self.minimap_view_size)
+        if self.recording is not None:
+            self.recording.start_segment(Scene(
+                buoys=[tuple(float(v) for v in b) for b in buoys],
+                boat_east=float(msg.boat_east),
+                boat_north=float(msg.boat_north),
+                wind_direction=float(msg.wind_direction),
+                wind_speed=float(msg.wind_speed),
+            ))
         # Reinitialize rendering with the new model, but keep recording
         self._init_rendering(clear_frames=True)
         self.get_logger().info(f'Environment created with {len(buoys)} buoys at boat position ({msg.boat_east}, {msg.boat_north})')
+
+    def _save_recording(self):
+        """Write the recording (render_mode "record") to recording_output."""
+        if self.recording is None:
+            return
+        if not self.recording.segments:
+            self.get_logger().warn('Nothing recorded: no environment was created (/env/create)')
+            return
+        try:
+            self.recording.save(self.recording_output)
+            self.get_logger().info(
+                f'Recording saved: {self.recording_output} '
+                f'({self.recording.frame_count} frames, {self.sim_time:.0f} s simulated)'
+            )
+        except Exception as e:
+            self.get_logger().error(f'Failed to save recording: {e}')
 
     def destroy_node(self):
         """Clean up resources before shutting down."""
         # Close video writer if recording
         self._close_video()
+        self._save_recording()
 
         # Close viewer if open
         if self.viewer is not None:
