@@ -58,6 +58,26 @@ graph_route_planner_node:
     # Independently, a grounding reported on /sense/collision always replans.
     margin_replan_depth: 0.5
 
+    # Replan when a fresh plan from the boat's position reaches the next via
+    # point much sooner than the current route would. On a beat the boat often
+    # ends up past the tacking corner it is still steering at (leeway, a wide
+    # tack, an early turn), and would sail back to it. Every check plans that
+    # one leg afresh (milliseconds, once the graph is built) and replans only
+    # if it saves at least shortcut_min_saving (in the planner's time units, as
+    # in the "time units" of the leg log lines) AND at least
+    # shortcut_min_fraction of what the rest of the leg still costs. A boat on
+    # its line saves nothing, and grid-sized differences stay under the
+    # threshold, so this does not fire on noise.
+    # How far the wind may shift (degrees) from the one the route was planned
+    # for before the whole route is replanned. Every other replan — the boat
+    # strayed, grounded, or found a shortcut — replans only the boat's own leg
+    # to the next via point and keeps the legs between later via points, which
+    # depend on nothing but the map and the wind.
+    wind_shift_replan: 10.0
+
+    shortcut_min_fraction: 0.15
+    shortcut_min_saving: 3.0
+
     # SEARCH
     # Clearance kept from the shoreline and from every island (in meters).
     margin: 3.0

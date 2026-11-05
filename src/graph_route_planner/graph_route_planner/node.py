@@ -57,6 +57,10 @@ from graph_route_planner.planner import (
 )
 from graph_route_planner.sailing import SailingModel
 
+#: The replan reason for a wind that makes a leg ahead unsailable. That leg may
+#: be any of them, so it is a reason to replan the whole route.
+WIND_MADE_LEG_UNSAILABLE = "wind shift made a leg unsailable"
+
 #: The route is state, not a stream. It is published once per plan, so a
 #: follower that starts late — or restarts — would otherwise wait indefinitely
 #: for a route that has already been sent. Latching hands the current route to
@@ -102,6 +106,19 @@ class Config(BaseModel):
     margin_replan_depth: float = Field(
         0.5, ge=0,
         description="Metres inside the shore margin before the boat is replanned out of it",
+    )
+    wind_shift_replan: float = Field(
+        10.0, gt=0, le=180,
+        description="Degrees the wind may shift from the one the legs were planned for "
+                    "before the whole route is replanned",
+    )
+    shortcut_min_fraction: float = Field(
+        0.15, ge=0,
+        description="Share of the rest of the leg a fresh plan must save to replace the route",
+    )
+    shortcut_min_saving: float = Field(
+        3.0, ge=0,
+        description="Least time (planner units) a fresh plan must save to replace the route",
     )
 
     # Search tuning — see PlannerConfig for what each one does.
@@ -242,6 +259,18 @@ class GraphRoutePlanner(Node):
         self.mission_complete: bool = False
 
         self.planned_route: list[Position] | None = None
+        # Which waypoints of planned_route are soft (tacking corners) — the
+        # rest are the mission's via points.
+        self.planned_soft: list[bool] | None = None
+
+        # Legs between consecutive via points, as last planned: (start, goal)
+        # -> waypoints. A leg between two fixed via points depends
+        # only on the map and the wind, so a local replan — the boat strayed —
+        # plans just the boat's own leg and reuses these. They are replaced
+        # whenever the whole route is planned: first plan, new mission, wind.
+        self.leg_cache: dict = {}
+        # The wind the cached legs were planned for, degrees.
+        self.planned_wind: float | None = None
         self.last_plan_time: datetime = datetime.min
 
         # Index of the route waypoint the boat is steering at, mirroring
@@ -277,6 +306,9 @@ class GraphRoutePlanner(Node):
             min_time_between_replanning=self.get_parameter("min_time_between_replanning").value,
             no_go_replan_margin=self.get_parameter("no_go_replan_margin").value,
             margin_replan_depth=self.get_parameter("margin_replan_depth").value,
+            **{name: self.get_parameter(name).value
+               for name in ("shortcut_min_fraction", "shortcut_min_saving", "wind_shift_replan")
+               if self.has_parameter(name)},
             margin=self.get_parameter("margin").value,
             grid_spacing=self.get_parameter("grid_spacing").value,
             merge_threshold=self.get_parameter("merge_threshold").value,
@@ -379,6 +411,7 @@ class GraphRoutePlanner(Node):
         self.via_index = 0
         self.mission_complete = False
         self.planned_route = None          # forces an immediate plan
+        self.leg_cache = {}
         self.route_index = 0
         self.last_plan_time = datetime.min
 
@@ -450,9 +483,32 @@ class GraphRoutePlanner(Node):
         ):
             return
 
-        reason = self._replan_reason()
+        # A wind shift changes every leg ahead; anything else is local to the
+        # boat's own leg, and the legs between later via points stay valid.
+        reason = self._wind_shift_reason()
+        whole_route = reason is not None
+        if reason is None:
+            reason = self._replan_reason()
+            # A later leg made unsailable cannot be fixed by replanning the
+            # boat's own leg.
+            whole_route = reason == WIND_MADE_LEG_UNSAILABLE
         if reason is not None:
-            self._plan_and_publish(reason)
+            self._plan_and_publish(reason, whole_route=whole_route)
+
+    def _wind_shift_reason(self) -> str | None:
+        """Replan everything if the wind has moved far from the one the route was planned for.
+
+        The drift triggers notice a wind shift only once a leg becomes
+        unsailable. Short of that, every tack ahead is still laid for the old
+        wind — sailable, but no longer the quickest way.
+        """
+        if self.planned_wind is None or self.wind_direction is None:
+            return None
+        shift = abs((self.wind_direction - self.planned_wind + 180.0) % 360.0 - 180.0)
+        if shift < self.config.wind_shift_replan:
+            return None
+        return (f"wind shifted {shift:.0f}° since the route was planned "
+                f"({self.planned_wind:.0f}° -> {self.wind_direction:.0f}°)")
 
     def _replan_reason(self) -> str | None:
         """Why the current route should be replanned, or None to keep it.
@@ -532,12 +588,76 @@ class GraphRoutePlanner(Node):
 
         for u, v in zip(remaining, remaining[1:]):
             if not model.heading_is_sailable(u, v):
-                return "wind shift made a leg unsailable"
+                return WIND_MADE_LEG_UNSAILABLE
 
-        return None
+        # Through the class: test stand-ins carry only the attributes they need.
+        return GraphRoutePlanner._shortcut_reason(self, model)
 
-    def _plan_and_publish(self, reason: str) -> None:
-        """Plan from the boat through the remaining via points, and publish it."""
+    def _shortcut_reason(self, model: SailingModel) -> str | None:
+        """Trigger 4: a fresh plan from here reaches the next via point much sooner.
+
+        On a beat the boat rarely stays on the planned zigzag: leeway, a wide
+        tack, an early turn put it somewhere else — often already further up
+        the course than the tacking corner it is still steering at, which it
+        would then sail back to. None of the drift triggers sees that; the boat
+        may be close to the route and on a sailable bearing.
+
+        So this compares, in the planner's own cost (sailing time plus
+        `segment_cost` per leg), what the current route still costs from where
+        the boat is — to its target, then along the route to the next via
+        point — with a fresh plan for the same stretch. It replans only if the
+        fresh plan saves at least `shortcut_min_saving` and at least
+        `shortcut_min_fraction` of the remaining cost. A boat on its line gains
+        nothing, and grid-sized differences stay below the threshold, so this
+        fires on real detours rather than on noise — and the replan rate limit
+        still applies on top.
+
+        Plans one leg, which takes milliseconds once the graph is cached.
+        Skipped while the boat is inside the shore margin: getting out of it
+        is the margin trigger's job, planned differently.
+        """
+        route, soft, boat = self.planned_route, getattr(self, "planned_soft", None), self.boat
+        if route is None or soft is None or boat is None or len(soft) != len(route):
+            return None
+        if not self.safe_water_prepared.covers(Point(boat)):
+            return None
+        index = min(self.route_index, len(route) - 1)
+        hard = next((i for i in range(index, len(route)) if not soft[i]), None)
+        if hard is None:
+            return None
+        goal = route[hard]
+        if Point(boat).distance(Point(goal)) < self.config.dist_threshold:
+            return None
+
+        per_leg = self.config.segment_cost
+        remaining = (model.sailing_time(boat, route[index]) + per_leg
+                     + sum(model.sailing_time(u, v) + per_leg
+                           for u, v in zip(route[index:hard], route[index + 1:hard + 1])))
+        try:
+            fresh = self.planner.plan(boat, goal, model, heading=self.boat_heading)
+        except (NoWaterError, ValueError):
+            return None
+        if not fresh.found:
+            return None
+        fresh_cost = fresh.duration + per_leg * (len(fresh.waypoints) - 1)
+
+        saving = remaining - fresh_cost
+        if saving < max(self.config.shortcut_min_saving,
+                        self.config.shortcut_min_fraction * remaining):
+            return None
+        return (f"shorter route from here: {fresh_cost:.1f} instead of {remaining:.1f} "
+                f"to the next via point")
+
+    def _plan_and_publish(self, reason: str, whole_route: bool = True) -> None:
+        """Plan from the boat through the remaining via points, and publish it.
+
+        Args:
+            reason: Why, for the log.
+            whole_route: Plan every leg afresh. If False, only the boat's own
+                leg (to the next via point) is planned, and the legs between
+                later via points are reused from the last plan — the right
+                thing when the boat strayed but nothing else changed.
+        """
         boat = self.boat
         if boat is None:
             return
@@ -563,24 +683,32 @@ class GraphRoutePlanner(Node):
             return
 
         model = self._sailing_model()
+        if whole_route or not self.leg_cache:
+            self.leg_cache = {}
+            self.planned_wind = self.wind_direction
+            whole_route = True
         planned = self._plan_through(points, model, self.boat_heading)
         self.last_plan_time = datetime.now()
 
         if planned is None:
             return
 
-        route, is_soft = planned
+        route, is_soft, reused = planned
         self.planned_route = route
+        self.planned_soft = is_soft
         self.route_index = 0
         self._publish_route(route, is_soft)
+        scope = ("whole route" if whole_route
+                 else f"own leg only, {reused} later leg(s) kept")
         self.get_logger().info(
             f"Published route ({reason}): {len(points) - 1} via point(s) ahead expanded to "
-            f"{len(route)} waypoints, wind from {self.wind_direction:.0f}°, "
+            f"{len(route)} waypoints, {scope}, wind from {self.wind_direction:.0f}°, "
             f"tack limit {self.config.min_tack_angle:.0f}°"
         )
 
     def _plan_through(self, points: list[Position], model: SailingModel,
-                      heading: float | None = None) -> tuple[list[Position], list[bool]] | None:
+                      heading: float | None = None
+                      ) -> tuple[list[Position], list[bool], int] | None:
         """Plan the water between each consecutive pair of points.
 
         Args:
@@ -590,17 +718,33 @@ class GraphRoutePlanner(Node):
                 starts where the boat is, so only that leg uses it — it limits
                 the way out of the shore margin to turns the boat can make.
 
+        Legs between two via points are taken from `leg_cache` when it has
+        them, and stored there when planned; the first leg starts at the boat
+        and is always planned.
+
         Returns:
-            ``(route, is_soft)`` of equal length, or None if any leg could not be
-            planned. A waypoint is soft when the search invented it to get
+            ``(route, is_soft, reused)``: the route and its softness flags, of
+            equal length, and how many legs came from the cache. None if any
+            leg could not be planned. A waypoint is soft when the search invented it to get
             somewhere — a tacking corner — and hard when it is a mission via
             point that must actually be rounded. The follower needs the
             difference: it may cut the corners, but not the course.
         """
         route: list[Position] = []
         is_soft: list[bool] = []
+        reused = 0
 
         for index, (start, goal) in enumerate(zip(points, points[1:])):
+            cached = self.leg_cache.get((start, goal)) if index > 0 else None
+            if cached is not None:
+                # Soft everywhere but the via point at its end, as below.
+                added = cached[1:]
+                route.extend(added)
+                is_soft.extend([True] * len(added))
+                if added:
+                    is_soft[-1] = False
+                reused += 1
+                continue
             try:
                 leg = self.planner.plan(start, goal, model,
                                         heading=heading if index == 0 else None)
@@ -631,8 +775,10 @@ class GraphRoutePlanner(Node):
             is_soft.extend([True] * len(added))
             if added:
                 is_soft[-1] = False
+            if index > 0:
+                self.leg_cache[(start, goal)] = list(leg.waypoints)
 
-        return route, is_soft
+        return route, is_soft, reused
 
     def _publish_route(self, waypoints: list[Position], is_soft: list[bool]) -> None:
         route_msg = RouteMsg()
