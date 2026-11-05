@@ -1,6 +1,7 @@
 import signal
 
 import rclpy
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 import mujoco
 import mujoco.viewer
@@ -564,6 +565,12 @@ class SimulationNode(Node):
 
     def destroy_node(self):
         """Clean up resources before shutting down."""
+        # Tear down the ROS side first. On Ctrl+C the context is usually
+        # already shut down, and while the node exists its logger still tries
+        # to publish to /rosout ("publisher's context is invalid"); once it is
+        # destroyed, the log lines below go to the console only.
+        super().destroy_node()
+
         # Close video writer if recording
         self._close_video()
         self._save_recording()
@@ -572,8 +579,6 @@ class SimulationNode(Node):
         if self.viewer is not None:
             self.viewer.close()
             self.viewer = None
-
-        super().destroy_node()
 
 
 def main(args=None):
@@ -584,7 +589,7 @@ def main(args=None):
     # Keep the node running
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):
         pass
 
     # Shutdown is triggered by SIGINT, and it often arrives twice: once from

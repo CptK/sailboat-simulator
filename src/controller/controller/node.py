@@ -1,4 +1,7 @@
+import signal
+
 import rclpy
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 import numpy as np
 
@@ -140,11 +143,15 @@ def main(args=None):
     # Keep the node running
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):
         pass
 
+    # A second SIGINT (ros2 launch forwards one after the run script's) must
+    # not interrupt the cleanup below
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+
     node.destroy_node()
-    rclpy.shutdown()
+    rclpy.try_shutdown()  # the SIGINT handler may already have shut down
 
 
 if __name__ == '__main__':

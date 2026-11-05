@@ -25,9 +25,11 @@ if the two ever diverge the routes will be silently offset.
 """
 
 import math
+import signal
 from datetime import datetime, timedelta
 
 import rclpy
+from rclpy.executors import ExternalShutdownException
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
@@ -646,10 +648,14 @@ def main(args: list[str] | None = None) -> None:
     node = GraphRoutePlanner()
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):
         pass
 
-    rclpy.shutdown()
+    # A second SIGINT (ros2 launch forwards one after the run script's) must
+    # not interrupt the cleanup below
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+
+    rclpy.try_shutdown()  # the SIGINT handler may already have shut down
 
 
 if __name__ == "__main__":

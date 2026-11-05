@@ -5,10 +5,12 @@ from pydantic import ConfigDict
 from pydantic import Field
 from pydantic import field_validator
 from pydantic import model_validator
+import signal
 import warnings
 
 # ROS2 interfaces
 import rclpy
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 
 # Boat messages and services
@@ -248,10 +250,14 @@ def main(args: list[str] | None = None) -> None:
     node = RoutePlanner()
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):
         pass
 
-    rclpy.shutdown()
+    # A second SIGINT (ros2 launch forwards one after the run script's) must
+    # not interrupt the cleanup below
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+
+    rclpy.try_shutdown()  # the SIGINT handler may already have shut down
 
 
 if __name__ == "main":
