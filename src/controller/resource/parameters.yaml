@@ -26,10 +26,14 @@ controller_node:
     # time and the loop behaves the same at 1 m/s as it does at 4.
     lqr_design_speed: 2.0
 
-    # Ceiling on that rescaling, for when the boat is barely moving. 4.0 means
-    # the gains stop growing below 1 m/s, where the rudder is against its stop
-    # anyway and more gain only adds chatter.
-    lqr_max_gain_boost: 4.0
+    # Ceiling on that rescaling, for when the boat is barely moving. 1.5 means
+    # the gains stop growing below about 1.6 m/s. Do not raise it much: the
+    # rudder only slews at 30 deg/s, which the LQR plant does not model, so a
+    # big boost turns the command into +/-45 deg bang-bang that the rudder
+    # cannot follow. With ~0.1 s of ROS loop latency that locked the boat into
+    # a +/-70 deg weave on downwind legs (boat slows in the swing -> boost
+    # rises -> worse overshoot). 1.5 removes it and turns no slower.
+    lqr_max_gain_boost: 1.5
 
     # PID CONTROLLER PARAMETERS
     pid_kp: 0.8
