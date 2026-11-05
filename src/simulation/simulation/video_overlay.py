@@ -22,8 +22,9 @@ def picture_in_picture(
     margin: int = 16,
     border: int = 2,
     border_color: tuple[int, int, int] = (255, 255, 255),
+    corner: str = "bottom-right",
 ) -> np.ndarray:
-    """Draw ``inset`` in the bottom-right corner of ``frame``, video-call style.
+    """Draw ``inset`` in a bottom corner of ``frame``, video-call style.
 
     Args:
         frame: Main RGB image, shape (H, W, 3), uint8.
@@ -32,6 +33,7 @@ def picture_in_picture(
         margin: Gap in pixels between the inset's border and the frame edges.
         border: Width in pixels of the frame drawn around the inset.
         border_color: RGB colour of that border.
+        corner: "bottom-right" or "bottom-left".
 
     Returns:
         A new image; ``frame`` is not modified.
@@ -40,10 +42,16 @@ def picture_in_picture(
     fh, fw = frame.shape[:2]
     ih, iw = inset.shape[:2]
     bottom = fh - margin
-    right = fw - margin
     top = bottom - ih - 2 * border
-    left = right - iw - 2 * border
-    if top < 0 or left < 0:
+    if corner == "bottom-right":
+        right = fw - margin
+        left = right - iw - 2 * border
+    elif corner == "bottom-left":
+        left = margin
+        right = left + iw + 2 * border
+    else:
+        raise ValueError(f"Unknown corner '{corner}'")
+    if top < 0 or left < 0 or right > fw:
         raise ValueError(
             f"Inset {iw}x{ih} with margin {margin} and border {border} "
             f"does not fit in a {fw}x{fh} frame"

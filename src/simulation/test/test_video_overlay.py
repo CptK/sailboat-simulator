@@ -36,3 +36,17 @@ def test_label_is_drawn_top_right_only():
     assert rows.min() >= 10 and cols.max() <= 1280 - 10  # inside the margin
     assert rows.max() < 360 and cols.min() > 640          # in the top-right quarter
     assert (frame == 0).all()                             # input not modified
+
+
+def test_inset_can_go_bottom_left():
+    frame = np.zeros((100, 200, 3), np.uint8)
+    inset = np.full((20, 40, 3), 7, np.uint8)
+    out = picture_in_picture(frame, inset, margin=5, border=2, corner="bottom-left")
+    assert (out[100 - 5 - 2 - 20:100 - 5 - 2, 5 + 2:5 + 2 + 40] == 7).all()
+    assert (out[:, 100:] == 0).all()                      # right half untouched
+
+
+def test_unknown_corner_raises():
+    with pytest.raises(ValueError):
+        picture_in_picture(np.zeros((50, 50, 3), np.uint8), np.zeros((5, 5, 3), np.uint8),
+                           corner="top-middle")

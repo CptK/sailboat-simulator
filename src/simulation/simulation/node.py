@@ -8,6 +8,7 @@ import time
 import numpy as np
 
 from simulation.sailboat_simulation import SailboatSimulation
+from simulation.minimap import Minimap
 from simulation.video_overlay import draw_label, inset_size, picture_in_picture
 
 #: Shown in the top-right corner of the video and viewer while the boat touches land.
@@ -43,6 +44,12 @@ class SimulationNode(Node):
         onboard_inset_scale (float): Width of the onboard-camera inset in the
             bottom-right corner of the video, as a fraction of the video width
             (default: 0.22). 0 disables the inset.
+        minimap_inset_scale (float): Width of the top-down minimap inset in the
+            bottom-left corner of the video, as a fraction of the video width
+            (default: 0.22). 0 disables it.
+        minimap_view_size (float): Width in metres of the area the minimap
+            shows around the boat, which it follows (default: 300). A map no
+            wider than this is shown whole. 0 always shows the whole map.
     """
 
     def __init__(self):
@@ -56,6 +63,9 @@ class SimulationNode(Node):
         self.declare_parameter('video_height', 720)
         # Picture-in-picture of the boat's own camera, like a video call self-view
         self.declare_parameter('onboard_inset_scale', 0.22)
+        # Top-down minimap of the course (map, route, buoys, track, boat)
+        self.declare_parameter('minimap_inset_scale', 0.22)
+        self.declare_parameter('minimap_view_size', 300.0)
         # Map whose land is drawn on the water and collided with: a name from
         # maps/catalog.yaml, a KML file in maps/, or a path. Empty means open
         # water, which is what launch.py wants — only the graph planner has a map.
@@ -67,6 +77,10 @@ class SimulationNode(Node):
         self.video_width = self.get_parameter('video_width').value
         self.video_height = self.get_parameter('video_height').value
         self.onboard_inset_scale = float(self.get_parameter('onboard_inset_scale').value)
+        self.minimap_inset_scale = float(self.get_parameter('minimap_inset_scale').value)
+        self.minimap_view_size = float(self.get_parameter('minimap_view_size').value)
+        self.map_water = None
+        self.minimap = None
         self.map_path = self.get_parameter('map_path').value
         self.obstacles = self._load_obstacles()
 
@@ -127,6 +141,7 @@ class SimulationNode(Node):
 
             sail_map = load_map(self.map_path)
             self.world_half_size = world_half_size_for(sail_map.water)
+            self.map_water = sail_map.water
             land = land_from_water(sail_map.water, self.world_half_size)
         except Exception as err:
             self.get_logger().warn(
@@ -134,6 +149,7 @@ class SimulationNode(Node):
                 f"The simulation runs without it."
             )
             self.world_half_size = None
+            self.map_water = None
             return []
 
         self.get_logger().info(
@@ -248,6 +264,10 @@ class SimulationNode(Node):
                 inset_w, inset_h = inset_size(self.video_width, self.onboard_inset_scale)
                 inset = self.sim.render_onboard(inset_w, inset_h)
                 frame = picture_in_picture(frame, inset)
+            if self.minimap is not None:
+                minimap = self.minimap.render(
+                    boat_x, boat_y, self.sim.data.qpos[self.sim.qadr_yaw])
+                frame = picture_in_picture(frame, minimap, corner="bottom-left")
             if self.sim.in_collision():
                 frame = draw_label(frame, COLLISION_TEXT)
             # Write frame directly to disk instead of buffering in memory
@@ -339,6 +359,8 @@ class SimulationNode(Node):
         waypoints_with_current = [(boat_east, boat_north)] + waypoints
 
         self.sim.update_route(waypoints_with_current)
+        if self.minimap is not None:
+            self.minimap.set_route(waypoints_with_current)
 
         if hasattr(self, 'current_route'):
             if waypoints != self.current_route:
@@ -356,6 +378,8 @@ class SimulationNode(Node):
         if msg.data:
             self.get_logger().info('Route completed, clearing route visualization')
             self.sim.update_route([])
+            if self.minimap is not None:
+                self.minimap.set_route([])
 
     def _on_reset_simulation(self, msg: Bool):
         if msg.data:
@@ -378,6 +402,11 @@ class SimulationNode(Node):
             world_half_size=self.world_half_size,
         )
         self.sim.set_boat_position(msg.boat_east, msg.boat_north)
+        if self.render_mode == 'video' and self.minimap_inset_scale > 0:
+            width, height = inset_size(self.video_width, self.minimap_inset_scale)
+            self.minimap = Minimap(width, height, water=self.map_water,
+                                   boat=(msg.boat_east, msg.boat_north), buoys=buoys,
+                                   view_size=self.minimap_view_size)
         # Reinitialize rendering with the new model, but keep recording
         self._init_rendering(clear_frames=True)
         self.get_logger().info(f'Environment created with {len(buoys)} buoys at boat position ({msg.boat_east}, {msg.boat_north})')
