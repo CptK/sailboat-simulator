@@ -8,3 +8,4 @@ pydantic
 shapely
 scipy
 matplotlib
+tqdm
