@@ -23,7 +23,8 @@
 
 landgraben:
   file: Landgraben.kml
-  description: Pond in Darmstadt with an island and a fountain (about 84 x 94 m)
+  description: Pond in Darmstadt with an island and a fountain (about 168 x 188 m, real size x2)
+  scale: 2
 
 test:
   file: Test.kml
