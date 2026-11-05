@@ -146,3 +146,21 @@ def test_a_maneuver_survives_the_first_step_after_a_replan(follower):
     RouteFollower._on_target_route(node, RouteMsgStub([(80.0, 5.0), (90.0, 12.0), (60.0, 60.0)]))
     step(node)
     assert node.maneuver is maneuver
+
+
+# ── a heading command of 0 degrees is a heading ───────────────────────────────
+
+def test_jibe_steering_due_north_is_not_dropped(follower):
+    """In a southerly, dead downwind is 0 degrees, which is where a jibe the
+    long way round steers first. A truthiness check once turned that 0 into
+    "no command" and steered at the target instead — the short way, through
+    the wind: a slow accidental tack."""
+    from route_follower.maneuver_action import JibeManeuver
+
+    jibe = JibeManeuver(target_heading=244.0, current_heading=128.0, heading_step_size=10.0,
+                        wind_direction=180.0, command_step_size_multiplier=1.5,
+                        heading_tolerance=2.0)
+    far_wsw = wp(-100.0 * 0.899, -100.0 * 0.438)          # bearing about 244 degrees
+    node = follower(route=[wp(0.0, 0.0), far_wsw], target_index=1, boat=wp(0.0, 0.0),
+                    heading=128.0, wind_direction=180.0, maneuver=jibe)
+    assert step(node) == 0.0

@@ -24,6 +24,10 @@ def config():
         command_step_size_multiplier=1.5,
         heading_tolerance=2.0,
         max_steps_to_cross_wind_when_tacking=40,
+        min_lookahead=10.0,
+        lookahead_time=5.0,
+        min_tack_speed=0.8,
+        build_speed_angle=65.0,
     )
 
 
@@ -51,8 +55,11 @@ def follower(config):
             publish=node.published_route.append
         )
         # Bind the real methods so the object behaves like the node.
+        # The room-to-turn checks do nothing here: the stand-in has no map.
         for name in ("_select_maneuver", "_prospective_target", "_prospective_index",
-                     "_skip_reached_soft_waypoints"):
+                     "_skip_reached_soft_waypoints", "_turn_early_at_soft_corner",
+                     "_maneuver_with_room", "_turn_fits", "_speed_and_course",
+                     "_maneuver_command", "_build_speed_for_tack"):
             setattr(node, name,
                     (lambda n=name: lambda *a, **k: getattr(RouteFollower, n)(node, *a, **k))())
         return node

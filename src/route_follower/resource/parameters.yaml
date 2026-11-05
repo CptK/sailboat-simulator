@@ -31,5 +31,57 @@ route_follower_node:
     # boat does not sit head to wind for a minute and a half before jibing.
     max_steps_to_cross_wind_when_tacking: 40
 
+    # KEEPING CLEAR OF LAND
+    # Map whose land the follower keeps clear of: a name from maps/catalog.yaml,
+    # a KML file in maps/, or a path. Empty disables the check (open water).
+    # launch_graph.py sets it to the same map the planner and simulation use.
+    map_path: ""
+
+    # How close the boat's reference point (mid-hull) may come to land, in
+    # metres. Half the 2.5 m hull plus a small buffer. Deliberately less than
+    # the planner's 3 m shore margin: planned legs run along that margin's edge,
+    # so checking against it would override every route.
+    hull_clearance: 1.5
+
+    # The path ahead that must be clear of land: lookahead_time seconds of
+    # sailing at the current speed, but at least min_lookahead metres — and
+    # never past the waypoint being steered at, where the boat turns anyway.
+    lookahead_time: 5.0
+    min_lookahead: 10.0
+
+    # The closest the boat can sail to the wind, in degrees. Headings inside it
+    # are never chosen to avoid land. Below the planner's min_tack_angle (50),
+    # which is where it lays tacks, not the boat's limit.
+    no_go_angle: 45.0
+
+    # Spacing of the headings tried when the desired one is blocked, degrees.
+    heading_search_step: 5.0
+
+    # ROOM TO TURN
+    # Before a tack or jibe, the follower predicts the boat's path through the
+    # turn and starts it only if that path keeps clear of land (if not, it tries
+    # the other maneuver, then holds course until there is room). Approaching a
+    # tacking corner it turns early if the corner itself has no room.
+    #
+    # The prediction, fitted to 21 maneuvers in the simulation: the boat holds
+    # its course for turn_delay seconds (the rudder slews, the controller builds
+    # the turn), then turns at turn_rate degrees per second, then sails
+    # turn_settle seconds on the new heading. That fit has ~1.4 m mean error
+    # (2.9 m worst), so the predicted path must keep turn_buffer metres more
+    # than hull_clearance from land — 3 m in total, the planner's own margin.
+    turn_delay: 1.5
+    turn_rate: 60.0
+    turn_settle: 2.0
+    turn_buffer: 1.5
+
+    # SPEED TO TACK
+    # A tack is carried through the wind by momentum. In the simulation every
+    # tack started below ~0.5 m/s stalled head to wind; every one from 0.66 m/s
+    # up came through. Below min_tack_speed (m/s) the boat first bears away to
+    # build_speed_angle degrees off the wind on its current tack, and tacks
+    # once it is fast enough.
+    min_tack_speed: 0.8
+    build_speed_angle: 65.0
+
     # Minimum seconds between repeated warnings about missing inputs.
     time_between_missing_values_logs: 10

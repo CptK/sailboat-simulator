@@ -18,12 +18,39 @@ Launch arguments:
     map           A map name from maps/catalog.yaml (e.g. landgraben, kornaten),
                   a KML file in maps/, or a path. Default openwater.
     grid_spacing  The planner's tacking-grid spacing in metres. Default 10.0,
-                  sized for the 240 m open-water map; small maps like the
-                  Landgraben pond want something finer (around 6), large
+                  sized for the 240 m open-water map; small maps want
+                  something finer (around 6), large
                   archipelagos coarser (around 20).
     max_leg_distance  Longest leg the planner considers, in metres; 0 (the
                   default) derives it from the map. Large maps need a limit
                   (100-150) to build their visibility graph in seconds.
+    render_mode   "record" (default): render nothing while running; the
+                  simulation saves simulation_recording.npz on shutdown, and
+                  render_video renders the video from it afterwards, in
+                  parallel (run_simulation_graph.py does both). "video":
+                  render while running (slow without a GPU, see Time).
+                  "none": no video.
+    realtime_factor  Simulated seconds per wall-clock second, unless rendering
+                  live. Default 1.0.
+    video_speedup Only for render_mode video: simulated seconds per second of
+                  video. Default 1.0 (real speed).
+    recording_output, video_output  Where the recording / live video is
+                  written. Defaults simulation_recording.npz / simulation.mp4
+                  in the working directory; run_simulation_graph.py points
+                  them into the run's directory under runs/.
+
+Time: the simulation is the ROS clock. It publishes simulated time on /clock
+and every other node runs with use_sim_time, so their timers tick in simulated
+time; the simulation itself keeps the wall clock. Without live rendering it
+runs at realtime_factor times the wall clock. With render_mode video, it
+advances one frame's worth of simulated time per rendered frame, however long
+rendering takes. That keeps the video at a constant speed: on a CPU-only
+machine rendering is slower than real time, so with a wall clock the video sped
+up and slowed down with the render load.
+
+use_sim_time is passed to each node rather than set for all of them with
+SetParameter: launch_ros then drops the nodes' own launch parameters, such as
+map_path.
 """
 
 from launch import LaunchDescription
@@ -58,6 +85,26 @@ def generate_launch_description():
         'max_leg_distance', default_value='0.0',
         description="Planner's longest leg in metres; 0 derives it from the map",
     )
+    video_speedup_arg = DeclareLaunchArgument(
+        'video_speedup', default_value='1.0',
+        description='render_mode video: simulated seconds per second of video',
+    )
+    render_mode_arg = DeclareLaunchArgument(
+        'render_mode', default_value='record',
+        description='record (render afterwards with render_video), video, or none',
+    )
+    realtime_factor_arg = DeclareLaunchArgument(
+        'realtime_factor', default_value='1.0',
+        description='Simulated seconds per wall-clock second, unless rendering live',
+    )
+    recording_output_arg = DeclareLaunchArgument(
+        'recording_output', default_value='simulation_recording.npz',
+        description='render_mode record: where the recording is saved',
+    )
+    video_output_arg = DeclareLaunchArgument(
+        'video_output', default_value='simulation.mp4',
+        description='render_mode video: where the video is saved',
+    )
     map_path = LaunchConfiguration('map')
 
     simulation_launch = IncludeLaunchDescription(
@@ -68,7 +115,16 @@ def generate_launch_description():
                 'simulation.launch.py',
             ])
         ),
-        launch_arguments={'map_path': map_path}.items(),
+        launch_arguments={
+            'map_path': map_path,
+            # The simulation is the clock; see "Time" above.
+            'publish_clock': 'true',
+            'video_speedup': LaunchConfiguration('video_speedup'),
+            'render_mode': LaunchConfiguration('render_mode'),
+            'realtime_factor': LaunchConfiguration('realtime_factor'),
+            'recording_output': LaunchConfiguration('recording_output'),
+            'video_output': LaunchConfiguration('video_output'),
+        }.items(),
     )
     controller_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -77,7 +133,8 @@ def generate_launch_description():
                 'launch',
                 'controller.launch.py',
             ])
-        )
+        ),
+        launch_arguments={'use_sim_time': 'true'}.items(),
     )
     route_follower_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -86,7 +143,9 @@ def generate_launch_description():
                 'launch',
                 'route_follower.launch.py',
             ])
-        )
+        ),
+        # The follower keeps clear of the same land the planner routes around.
+        launch_arguments={'map_path': map_path, 'use_sim_time': 'true'}.items(),
     )
 
     graph_parameters_file = PathJoinSubstitution([
@@ -111,6 +170,8 @@ def generate_launch_description():
                     LaunchConfiguration('grid_spacing'), value_type=float),
                 'max_leg_distance': ParameterValue(
                     LaunchConfiguration('max_leg_distance'), value_type=float),
+                # Timers tick in simulated time; see "Time" above.
+                'use_sim_time': True,
             },
         ],
     )
@@ -119,6 +180,11 @@ def generate_launch_description():
         map_arg,
         grid_spacing_arg,
         max_leg_arg,
+        video_speedup_arg,
+        render_mode_arg,
+        realtime_factor_arg,
+        recording_output_arg,
+        video_output_arg,
         simulation_launch,
         controller_launch,
         route_follower_launch,
