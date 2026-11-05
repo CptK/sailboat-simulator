@@ -147,6 +147,9 @@ class SailboatSimulation:
         self.vadr_roll = self.model.jnt_dofadr[self.jnt_roll]
         self.vadr_boom = self.model.jnt_dofadr[self.jnt_boom]
 
+        # Body whose subtree is the whole boat (it carries the x, y, yaw joints)
+        self.body_boat = self.model.jnt_bodyid[self.jnt_x]
+
         # Get actuator indices
         self.act_rudder = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_ACTUATOR, "rudder_ctrl")
         self.act_sheet = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_ACTUATOR, "sheet_ctrl")
@@ -235,9 +238,22 @@ class SailboatSimulation:
 
         forces = compute_total_forces(boat, self.wind, sail, self.physics)
 
+        # The physics model treats fx, fy as acting at the boat's centre and puts
+        # every centre-of-effort / lateral-resistance offset into forces.yaw
+        # explicitly. A generalized force on the boat_x / boat_y slide joints,
+        # however, acts at the yaw hinge, and the boat's centre of mass sits
+        # about 0.3 m aft of it. Left alone, the keel's lateral drag then acts
+        # ahead of the centre of mass and adds a yaw moment that drives every
+        # turn further (the hull skids, the drag pushes the bow round). Move the
+        # force to the centre of mass by adding its moment about the hinge.
+        com = self.data.subtree_com[self.body_boat]
+        hinge = self.data.xpos[self.body_boat]
+        r_x, r_y = com[0] - hinge[0], com[1] - hinge[1]
+        com_moment = r_x * forces.fy - r_y * forces.fx
+
         self.data.qfrc_applied[self.vadr_x] = forces.fx
         self.data.qfrc_applied[self.vadr_y] = forces.fy
-        self.data.qfrc_applied[self.vadr_yaw] = forces.yaw
+        self.data.qfrc_applied[self.vadr_yaw] = forces.yaw + com_moment
         self.data.qfrc_applied[self.vadr_roll] = forces.roll
         self.data.qfrc_applied[self.vadr_boom] = forces.boom
 
