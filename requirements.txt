@@ -9,3 +9,4 @@ shapely
 scipy
 matplotlib
 tqdm
+anthropic

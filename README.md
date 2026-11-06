@@ -12,6 +12,7 @@ A complete ROS2-based autonomous sailboat navigation system with physics-based s
   - [Installation](#installation)
   - [Running the Full System](#running-the-full-system)
   - [Maps](#maps)
+  - [LLM pilot](#llm-pilot)
   - [Interactive Simulation](#interactive-simulation)
   - [Launch Individual Nodes](#launch-individual-nodes)
 - [Docker Deployment](#docker-deployment)
@@ -172,6 +173,59 @@ metres). To add a map, put the KML in `maps/`, add a catalog entry (for OSM expo
 a course, use the editor (or copy a file in `scenarios/` and edit it); the run script checks it
 (structure, and that everything is on water) before launching anything, and
 `pytest scripts/test_scenario.py` checks every scenario file.
+
+### LLM pilot
+
+A first step towards vision-language-action models: a Claude model steers the boat
+from the onboard camera image and the instruments, one course change at a time,
+and the regular controller holds each course. `scripts/llm_pilot.py` is the
+command line; the code is the `sail_pilot` package in `src/sail_pilot` (a plain
+Python package, not built by colcon):
+
+| Module | What it holds |
+|---|---|
+| `sailing.py` | no-go zone, points of sail, when a turn is a tack |
+| `task.py`, `observation.py` | the task; what a pilot sees each decision and what it answers |
+| `render.py` | marks on the camera image (bearings, distances) and the chart |
+| `harness.py` | `PilotRun`: physics + controller node + pilot, tacks, groundings |
+| `pilots/` | `ClaudePilot` (prompts, schemas, prices) and `ScriptedPilot` (privileged baseline) |
+| `output.py`, `cli.py` | run directories, trajectory plot, the command line |
+
+A new pilot only needs `decide(observation) -> Decision` and `settings() -> dict`.
+Tests (no API calls): `pytest src/sail_pilot/test`.
+
+```bash
+python scripts/llm_pilot.py landgraben --target orange                  # paused: sim waits for the model
+python scripts/llm_pilot.py landgraben --target orange --mode realtime  # boat sails on while it thinks
+python scripts/llm_pilot.py landgraben --target orange --pilot scripted # no API: a pilot that knows the way
+```
+
+Each run writes `runs/llm_<scenario>_<time>/` with every image the model saw
+(`frames/`), every answer with its latency and tokens (`decisions.jsonl`), a
+summary (`run.json`), the track on the map (`trajectory.png`) and a video. Useful
+options (see `--help`):
+
+- `--model claude-sonnet-5-5` (or `claude-opus-5-5`, ...), `--effort low|medium|high|xhigh|max`,
+  `--no-thinking` (Haiku and Sonnet only)
+- `--chart`: also send a top-down chart (north up, buoys, boat, its track)
+- `--memory` / `--no-memory`: the model keeps a running progress note, for
+  multi-step tasks (on by default with `--instruction`)
+- `--instruction "..."`: any task in words (no automatic success check)
+- `--stop-on-grounding 10`: end the run once stuck on land this long (default; 0 sails on)
+- `--no-guard`: let the autopilot steer into the no-go zone when asked (it normally
+  replaces such headings with the nearest sailable one)
+
+It needs an Anthropic API key (Anthropic Console → Settings → API Keys). Put it
+in a `.env` file in the repository root:
+
+```bash
+cp .env.example .env      # then fill in ANTHROPIC_API_KEY=sk-ant-...
+```
+
+`.env` is git-ignored and docker-ignored, so it is never committed and never
+copied into an image (images built in CI never see it either). A variable set in
+the environment (`export`, `docker run -e ANTHROPIC_API_KEY ...`) takes
+precedence over the file.
 
 ### Interactive Simulation
 

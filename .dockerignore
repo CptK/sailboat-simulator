@@ -1,0 +1,6 @@
+# Never copy secrets into an image. .env holds local API keys (see .env.example);
+# it is git-ignored too, so images built in CI never had it — this covers
+# images built locally from a working copy.
+.env
+.env.*
+!.env.example
