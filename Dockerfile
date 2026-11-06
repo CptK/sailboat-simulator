@@ -35,7 +35,11 @@ RUN pip3 install -r requirements.txt --break-system-packages
 
 RUN rosdep update -q
 USER root
-RUN rosdep install --from-paths src --ignore-src -r -y
+# apt lists were wiped above, so refresh them or rosdep's apt-get install
+# cannot find anything. maps/ holds the sail_maps package (outside src/).
+RUN apt-get update && \
+    rosdep install --from-paths src maps --ignore-src -r -y && \
+    rm -rf /var/lib/apt/lists/*
 USER sailor
 WORKDIR /home/sailor/sailboat_simulator
 

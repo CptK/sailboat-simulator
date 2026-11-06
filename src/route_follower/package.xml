@@ -18,7 +18,6 @@
        pydantic/numpy/shapely come via pip (requirements.txt); see
        graph_route_planner's package.xml for why they are not rosdep keys. -->
 
-  <test_depend>python3-pytest</test_depend>
 
   <export>
     <build_type>ament_python</build_type>

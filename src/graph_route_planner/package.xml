@@ -14,9 +14,8 @@
 
   <!--
     shapely, pydantic and matplotlib are deliberately NOT declared as rosdep
-    keys. They are installed by pip from requirements.txt, and the Dockerfile
-    clears /var/lib/apt/lists before running `rosdep install`, so asking rosdep
-    for python3-shapely makes apt fail to locate it and the image build aborts.
+    keys. They are installed by pip from requirements.txt; declaring them here
+    as well would install a second, apt-packaged copy next to the pip one.
     Every other package in this workspace resolves its Python deps the same way.
   -->
 
